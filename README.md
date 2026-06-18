@@ -1,3 +1,42 @@
 # pi-onlyne
 
-Pi extension harness for Onlyne. Behavior is intentionally undecided until the integration mode is agreed.
+Pi extension for using Onlyne as a workspace-local messaging bridge.
+
+## What it does
+
+- Watches an existing Onlyne workspace.
+- Starts Onlyne for the current workspace when requested.
+- Subscribes to inbound channel events without polling.
+- Lets the agent reply, send, or broadcast plain-text messages through tools.
+- Keeps config in the project, not in global home state.
+
+## Requirements
+
+- `onlyne` available on `PATH`, or set `ONLYNE_BIN`.
+- A workspace with `.onlyne/` already initialized.
+
+## Commands
+
+```text
+/onlyne status
+/onlyne watch on
+/onlyne watch off
+/onlyne config auto-start
+```
+
+## Agent tools
+
+```text
+onlyne_reply({ text })
+onlyne_send({ channelId, conversationId, text })
+onlyne_broadcast({ targets, text })
+onlyne_mark_no_reply({ reason })
+```
+
+v1 is plain text only.
+
+## Config
+
+Project-local config lives at `.pi/onlyne.json`. Defaults are safe: watch is manual, inbound messages auto-handle once watch is on, and outbound reply fallback is guarded.
+
+See `SPEC.md` for behavior details.
