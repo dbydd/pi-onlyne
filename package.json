@@ -10,11 +10,12 @@
     "check": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.6",
+    "@earendil-works/pi-ai": "^0.79.10",
+    "@earendil-works/pi-coding-agent": "^0.79.10",
     "typebox": "^1.2.16"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@types/node": "^22.15.21"
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
   }
 }

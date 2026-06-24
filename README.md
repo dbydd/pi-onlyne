@@ -7,7 +7,7 @@ Pi extension for using Onlyne as a workspace-local messaging bridge.
 - Watches an existing Onlyne workspace.
 - Starts Onlyne for the current workspace when requested.
 - Subscribes to inbound channel events without polling.
-- Lets the agent reply, send, or broadcast plain-text messages through tools.
+- Lets the agent reply, send, or broadcast messages through tools.
 - Keeps config in the project, not in global home state.
 
 ## Requirements
@@ -28,12 +28,12 @@ Pi extension for using Onlyne as a workspace-local messaging bridge.
 
 ```text
 onlyne_reply({ text })
-onlyne_send({ channelId, conversationId, text })
-onlyne_broadcast({ targets, text })
+onlyne_send({ channelId, conversationId, text, format? })
+onlyne_broadcast({ targets, text, format? })
 onlyne_mark_no_reply({ reason })
 ```
 
-v1 is plain text only.
+`format` is `plain` by default; pass `markdown` for rich-text capable Onlyne channels.
 
 ## Config
 
