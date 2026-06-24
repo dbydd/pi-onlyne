@@ -1,6 +1,6 @@
 {
   "name": "pi-onlyne",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Pi extension tools for sending messages through Onlyne.",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,6 +23,7 @@
     "url": "git+https://github.com/dbydd/pi-onlyne.git"
   },
   "keywords": [
+    "pi-package",
     "pi",
     "onlyne",
     "messaging",
@@ -34,13 +35,21 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "dependencies": {
+  "devDependencies": {
     "@earendil-works/pi-ai": "^0.79.10",
     "@earendil-works/pi-coding-agent": "^0.79.10",
-    "typebox": "^1.2.16"
-  },
-  "devDependencies": {
+    "typebox": "^1.2.16",
     "@types/node": "^22.15.21",
     "typescript": "^5.8.3"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   }
 }

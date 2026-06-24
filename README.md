@@ -10,6 +10,18 @@ Pi extension for using Onlyne as a workspace-local messaging bridge.
 - Lets the agent reply, send, or broadcast messages through tools.
 - Keeps config in the project, not in global home state.
 
+## Install
+
+```bash
+pi install npm:pi-onlyne
+```
+
+For a one-off run:
+
+```bash
+pi -e npm:pi-onlyne
+```
+
 ## Requirements
 
 - `onlyne` available on `PATH`, or set `ONLYNE_BIN`.
