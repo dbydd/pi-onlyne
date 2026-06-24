@@ -2,6 +2,8 @@
 
 Pi extension for using Onlyne as a workspace-local messaging bridge.
 
+**Onlyne main repository:** https://github.com/dbydd/onlyne
+
 ## What it does
 
 - Watches an existing Onlyne workspace.
