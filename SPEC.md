@@ -12,7 +12,7 @@ Pi extension for Onlyne. Onlyne remains a workspace-local IM broker; this extens
 - Inbound events come from Onlyne `subscribe_events`; no polling.
 - Inbound mode is rule-based: `auto-handle`, `queue-only`, or `muted`.
 - Outbound defaults to `guarded-explicit`: prefer tool reply, fallback to final text, else send configured error text.
-- Send tools default to plain text and may pass `format: "markdown"` to Onlyne.
+- Send tools default to Markdown and may pass `raw_text: true` to Onlyne for literal text.
 - Broadcast sends concurrently with per-target retry and per-target results.
 
 ## Config
@@ -34,8 +34,8 @@ Stored in project `.pi/onlyne.json`:
 ## Tools
 
 - `onlyne_reply({ text })`
-- `onlyne_send({ channelId, conversationId, text, format? })`
-- `onlyne_broadcast({ targets, text, format? })`
+- `onlyne_send({ channelId, conversationId, text, rawText? })`
+- `onlyne_broadcast({ targets, text, rawText? })`
 - `onlyne_mark_no_reply({ reason? })`
 
 ## Deferred

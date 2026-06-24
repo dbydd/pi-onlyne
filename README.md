@@ -28,12 +28,12 @@ Pi extension for using Onlyne as a workspace-local messaging bridge.
 
 ```text
 onlyne_reply({ text })
-onlyne_send({ channelId, conversationId, text, format? })
-onlyne_broadcast({ targets, text, format? })
+onlyne_send({ channelId, conversationId, text, rawText? })
+onlyne_broadcast({ targets, text, rawText? })
 onlyne_mark_no_reply({ reason })
 ```
 
-`format` is `plain` by default; pass `markdown` for rich-text capable Onlyne channels.
+Messages default to Markdown. Set `rawText: true` only when the text must be sent literally.
 
 ## Config
 

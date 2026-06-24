@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { Workspace } from "./workspace.js";
-export interface OnlyneRequest { id: string; op: string; channel_id?: string; conversation_id?: string; text?: string; format?: "plain" | "markdown"; limit?: number }
+export interface OnlyneRequest { id: string; op: string; channel_id?: string; conversation_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
 export interface SendTarget { channelId: string; conversationId: string }
 export interface SendResult extends SendTarget { ok: boolean; error?: string }
 export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
@@ -42,15 +42,15 @@ export async function connectOrSpawn(ws: Workspace): Promise<{ owner: "external"
 	const process = spawnDaemon(ws); await waitForSocket(ws.socketPath); return { owner: "extension", process };
 }
 export function stopProcess(child?: ChildProcess) { if (!child || child.killed) return; child.kill("SIGTERM"); setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 1500).unref(); }
-export async function sendWithRetry(socketPath: string, target: SendTarget, text: string, attempts: number, format: "plain" | "markdown" = "plain"): Promise<SendResult> {
+export async function sendWithRetry(socketPath: string, target: SendTarget, text: string, attempts: number, rawText = false): Promise<SendResult> {
 	let error = "unknown error";
 	for (let i = 0; i < Math.max(1, attempts); i++) {
-		try { const res = await request(socketPath, { id: `send-${Date.now()}-${i}`, op: "send_message", channel_id: target.channelId, conversation_id: target.conversationId, text, format }); if (res.ok) return { ...target, ok: true }; error = res.error?.message ?? JSON.stringify(res.error ?? res); } catch (e) { error = e instanceof Error ? e.message : String(e); }
+		try { const res = await request(socketPath, { id: `send-${Date.now()}-${i}`, op: "send_message", channel_id: target.channelId, conversation_id: target.conversationId, text, raw_text: rawText }); if (res.ok) return { ...target, ok: true }; error = res.error?.message ?? JSON.stringify(res.error ?? res); } catch (e) { error = e instanceof Error ? e.message : String(e); }
 	}
 	return { ...target, ok: false, error };
 }
-export async function broadcast(socketPath: string, targets: SendTarget[], text: string, attempts: number, concurrency: number, format: "plain" | "markdown" = "plain"): Promise<SendResult[]> {
+export async function broadcast(socketPath: string, targets: SendTarget[], text: string, attempts: number, concurrency: number, rawText = false): Promise<SendResult[]> {
 	const out: SendResult[] = []; let next = 0;
-	async function worker() { for (;;) { const i = next++; if (i >= targets.length) return; out[i] = await sendWithRetry(socketPath, targets[i]!, text, attempts, format); } }
+	async function worker() { for (;;) { const i = next++; if (i >= targets.length) return; out[i] = await sendWithRetry(socketPath, targets[i]!, text, attempts, rawText); } }
 	await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, targets.length)) }, worker)); return out;
 }
