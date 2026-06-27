@@ -118,7 +118,7 @@ onlyne_broadcast({
     { channelId: "telegram" },
     { channelId: "feishu" }
   ],
-  text: "# Release shipped\n\nVersion 0.2.3 is live."
+  text: "# Release shipped\n\nVersion 0.3.0 is live."
 })
 ```
 
