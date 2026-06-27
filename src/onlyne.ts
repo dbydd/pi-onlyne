@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { Workspace } from "./workspace.js";
-export interface OnlyneRequest { id: string; op: string; channel_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
+export interface OnlyneRequest { id: string; op: string; channel_id?: string; message_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
 export interface SendTarget { channelId: string }
 export interface SendResult extends SendTarget { ok: boolean; error?: string }
 export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
@@ -44,6 +44,9 @@ export async function connectOrSpawn(ws: Workspace): Promise<{ owner: "external"
 export function stopProcess(child?: ChildProcess) { if (!child || child.killed) return; child.kill("SIGTERM"); setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 1500).unref(); }
 export async function loopback(socketPath: string, text: string, rawText = true): Promise<any> {
 	return request(socketPath, { id: `loopback-${Date.now()}`, op: "loopback", text, raw_text: rawText });
+}
+export async function markConsumed(socketPath: string, messageId: string): Promise<any> {
+	return request(socketPath, { id: `consume-${Date.now()}`, op: "mark_io_consumed", message_id: messageId });
 }
 export async function sendWithRetry(socketPath: string, target: SendTarget, text: string, attempts: number, rawText = false): Promise<SendResult> {
 	let error = "unknown error";
