@@ -14,6 +14,7 @@ Pi extension for Onlyne. Onlyne remains a workspace-local IM broker; this extens
 - Outbound defaults to `guarded-explicit`: prefer tool reply, fallback to final text, else send configured error text.
 - Send tools default to Markdown and may pass `raw_text: true` to Onlyne for literal text.
 - Broadcast sends concurrently with per-target retry and per-target results.
+- Loopback inbound messages wake Pi without creating a reply obligation.
 
 ## Config
 
@@ -34,8 +35,9 @@ Stored in project `.pi/onlyne.json`:
 ## Tools
 
 - `onlyne_reply({ text })`
-- `onlyne_send({ channelId, conversationId, text, rawText? })`
+- `onlyne_send({ channelId, text, rawText? })`
 - `onlyne_broadcast({ targets, text, rawText? })`
+- `onlyne_loopback({ text, rawText? })`
 - `onlyne_mark_no_reply({ reason? })`
 
 ## Deferred

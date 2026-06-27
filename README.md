@@ -19,13 +19,16 @@ Onlyne is deliberately narrow:
 
 `pi-onlyne` connects pi to an existing Onlyne workspace and exposes Onlyne as native pi tools.
 
+Onlyne channels are singleton-routed: each enabled channel has one `bind_conversation_id` set in config or by sending `/handshake` from the desired conversation, so pi tools take `channelId` only.
+
 With this extension, a pi agent can:
 
 - watch an Onlyne workspace for inbound IM messages
 - surface inbound messages into the current pi session
 - reply to the current inbound message
-- send a message to a specific channel conversation
+- send a message to a channel's configured conversation
 - broadcast the same message to multiple conversations
+- inject a local loopback activation so background scripts can wake the session
 - mark an inbound message as intentionally not replied
 
 Messages are Markdown by default, matching normal agent output. Use `rawText: true` only when the message must be sent literally.
@@ -46,6 +49,8 @@ You also need the `onlyne` CLI installed and an initialized workspace:
 
 ```bash
 onlyne init
+# Optional: refresh the workspace-local agent skill
+onlyne export-skill
 ```
 
 If `onlyne` is not on `PATH`, set:
@@ -79,8 +84,9 @@ When a message arrives through Onlyne, pi receives it as a follow-up message. Th
 
 ```text
 onlyne_reply({ text })
-onlyne_send({ channelId, conversationId, text, rawText? })
+onlyne_send({ channelId, text, rawText? })
 onlyne_broadcast({ targets, text, rawText? })
+onlyne_loopback({ text, rawText? })
 onlyne_mark_no_reply({ reason? })
 ```
 
@@ -89,7 +95,6 @@ onlyne_mark_no_reply({ reason? })
 ```ts
 onlyne_send({
   channelId: "telegram",
-  conversationId: "123456",
   text: "# Build report\n\nAll checks passed."
 })
 ```
@@ -99,7 +104,6 @@ onlyne_send({
 ```ts
 onlyne_send({
   channelId: "telegram",
-  conversationId: "123456",
   text: "# not a heading",
   rawText: true
 })
@@ -110,12 +114,22 @@ onlyne_send({
 ```ts
 onlyne_broadcast({
   targets: [
-    { channelId: "telegram", conversationId: "123456" },
-    { channelId: "feishu", conversationId: "oc_xxx" }
+    { channelId: "telegram" },
+    { channelId: "feishu" }
   ],
   text: "# Release shipped\n\nVersion 0.2.3 is live."
 })
 ```
+
+### Loopback wake-up
+
+From any local script, inject an inbound message into the current Onlyne daemon:
+
+```bash
+onlyne client '{"id":"wake","op":"loopback","text":"background job finished","raw_text":true}'
+```
+
+Pi treats channel `loopback` as wake-up-only: it sends a follow-up to the session, but does not expect `onlyne_reply`.
 
 ## Local state
 
