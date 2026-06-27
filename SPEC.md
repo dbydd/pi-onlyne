@@ -15,6 +15,8 @@ Pi extension for Onlyne. Onlyne remains a workspace-local IM broker; this extens
 - Send tools default to Markdown and may pass `raw_text: true` to Onlyne for literal text.
 - Broadcast sends concurrently with per-target retry and per-target results.
 - Loopback inbound messages wake Pi without creating a reply obligation.
+- After pi surfaces an inbound follow-up, it calls `mark_io_consumed` so Onlyne FIFO `out_cursor = "consume"` stays synchronized with pi notifications.
+- FIFO IO itself remains owned by the Onlyne daemon; pi-onlyne does not open `.onlyne/channels/*/in|out` directly.
 
 ## Config
 

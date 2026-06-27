@@ -29,9 +29,10 @@ With this extension, a pi agent can:
 - send a message to a channel's configured conversation
 - broadcast the same message to multiple conversations
 - inject a local loopback activation so background scripts can wake the session
+- share Onlyne's FIFO consume cursor so `.onlyne/channels/<channel>/out` does not re-read messages already surfaced to pi
 - mark an inbound message as intentionally not replied
 
-Messages are Markdown by default, matching normal agent output. Use `rawText: true` only when the message must be sent literally.
+Messages are Markdown by default, matching normal agent output. Use `rawText: true` only when the message must be sent literally. Onlyne can also expose FIFO IO under `.onlyne/channels/<channel>/in|out`; pi-onlyne stays on the socket/event API and advances the shared consume cursor after delivering inbound follow-ups.
 
 ## Install
 
@@ -127,6 +128,8 @@ From any local script, inject an inbound message into the current Onlyne daemon:
 
 ```bash
 onlyne client '{"id":"wake","op":"loopback","text":"background job finished","raw_text":true}'
+# or, with FIFO IO enabled by the daemon:
+printf 'background job finished\n' > .onlyne/channels/loopback/in
 ```
 
 Pi treats channel `loopback` as wake-up-only: it sends a follow-up to the session, but does not expect `onlyne_reply`.
