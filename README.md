@@ -70,7 +70,7 @@ export ONLYNE_BIN=/path/to/onlyne
 /onlyne watch on
 ```
 
-When a message arrives through Onlyne, pi receives it as a follow-up message. The agent can then call `onlyne_reply`, or deliberately call `onlyne_mark_no_reply`.
+When a normal user message arrives through Onlyne, pi receives it as a follow-up message. Onlyne control messages such as `/handshake` are consumed silently. The agent can then call `onlyne_reply`, or deliberately call `onlyne_mark_no_reply`.
 
 ## Commands
 
