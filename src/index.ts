@@ -33,7 +33,25 @@ export default function onlyne(pi: ExtensionAPI) {
 		}
 		await reply(inbound.fallbackText || state.lastValidOutput || cfg.outbound.guardedExplicit.noOutputFallbackText);
 	});
-	pi.registerCommand("onlyne", { description: "Onlyne watch/status/config commands", handler: async (argLine: string, ctx: any) => { const [cmd, sub] = argLine.trim().split(/\s+/); try { if (cmd === "watch" && sub === "on") ctx.ui.notify(await startWatch(pi), "info"); else if (cmd === "watch" && sub === "off") ctx.ui.notify(stopWatch(), "info"); else if (cmd === "status") ctx.ui.notify(`onlyne ${state.watching ? "watching" : "stopped"}; owner=${state.owner}; workspace=${state.workspace?.root ?? "none"}`, "info"); else if (cmd === "config" && sub === "auto-start") { const cfg = currentConfig(); cfg.watch.autoStart = !cfg.watch.autoStart; saveConfig(state.cwd, cfg); ctx.ui.notify(`autoStart=${cfg.watch.autoStart}`, "info"); } else ctx.ui.notify("usage: /onlyne status | watch on|off | config auto-start", "info"); } catch (e) { ctx.ui.notify(e instanceof Error ? e.message : String(e), "error"); } } });
+	pi.registerCommand("onlyne", {
+		description: "Onlyne watch/status/config commands",
+		getArgumentCompletions: (prefix: string) => {
+			const commands = ["status", "watch on", "watch off", "config auto-start"];
+			const p = prefix.trimStart();
+			const filtered = commands.filter((c) => c.startsWith(p));
+			return filtered.length ? filtered.map((value) => ({ value, label: value })) : null;
+		},
+		handler: async (argLine: string, ctx: any) => {
+			const [cmd, sub] = argLine.trim().split(/\s+/);
+			try {
+				if (cmd === "watch" && sub === "on") ctx.ui.notify(await startWatch(pi), "info");
+				else if (cmd === "watch" && sub === "off") ctx.ui.notify(stopWatch(), "info");
+				else if (cmd === "status") ctx.ui.notify(`onlyne ${state.watching ? "watching" : "stopped"}; owner=${state.owner}; workspace=${state.workspace?.root ?? "none"}`, "info");
+				else if (cmd === "config" && sub === "auto-start") { const cfg = currentConfig(); cfg.watch.autoStart = !cfg.watch.autoStart; saveConfig(state.cwd, cfg); ctx.ui.notify(`autoStart=${cfg.watch.autoStart}`, "info"); }
+				else ctx.ui.notify("usage: /onlyne status | watch on|off | config auto-start", "info");
+			} catch (e) { ctx.ui.notify(e instanceof Error ? e.message : String(e), "error"); }
+		},
+	});
 	pi.registerTool(defineTool({ name: "onlyne_reply", label: "Onlyne reply", description: "Reply with plain text to the current Onlyne inbound message.", parameters: Type.Object({ text: Type.String() }), executionMode: "parallel", async execute(_id, params) { return textResult(JSON.stringify(await reply(params.text))); } }));
 	pi.registerTool(defineTool({ name: "onlyne_send", label: "Onlyne send", description: "Send Markdown to the channel's configured Onlyne conversation. Set rawText=true only for literal plain text.", parameters: Type.Object({ channelId: Type.String(), text: Type.String(), rawText: Type.Optional(Type.Boolean()) }), executionMode: "parallel", async execute(_id, params) { if (!state.workspace) throw new Error("onlyne workspace not found"); const res = await sendWithRetry(state.workspace.socketPath, params, params.text, currentConfig().outbound.retry.attempts, params.rawText ?? false); return textResult(JSON.stringify(res), res); } }));
 	pi.registerTool(defineTool({ name: "onlyne_broadcast", label: "Onlyne broadcast", description: "Send Markdown to many configured Onlyne channels concurrently. Set rawText=true only for literal plain text.", parameters: Type.Object({ targets: Type.Array(Type.Object({ channelId: Type.String() })), text: Type.String(), rawText: Type.Optional(Type.Boolean()) }), executionMode: "parallel", async execute(_id, params) { if (!state.workspace) throw new Error("onlyne workspace not found"); const cfg = currentConfig(); const results = await broadcast(state.workspace.socketPath, params.targets as SendTarget[], params.text, cfg.outbound.retry.attempts, cfg.outbound.retry.concurrency, params.rawText ?? false); return textResult(JSON.stringify({ ok: results.every((r) => r.ok), results }), results); } }));

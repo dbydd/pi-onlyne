@@ -79,6 +79,8 @@ When a normal user message arrives through Onlyne, pi receives it as a follow-up
 /onlyne config auto-start
 ```
 
+`/onlyne` supports argument completions for `status`, `watch on`, `watch off`, and `config auto-start`.
+
 ## Agent tools
 
 ```text
@@ -116,7 +118,7 @@ onlyne_broadcast({
     { channelId: "telegram" },
     { channelId: "feishu" }
   ],
-  text: "# Release shipped\n\nVersion 0.3.2 is live."
+  text: "# Release shipped\n\nVersion 0.3.4 is live."
 })
 ```
 
