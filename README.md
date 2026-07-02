@@ -46,23 +46,21 @@ For a one-off run without installing:
 pi -e npm:pi-onlyne
 ```
 
-You also need an initialized Onlyne workspace and a running workspace-local daemon:
+You also need an initialized Onlyne workspace:
 
 ```bash
 onlyne init
-onlyne run
-# Optional, in another shell: refresh the workspace-local agent skill
+# Optional: refresh the workspace-local agent skill
 onlyne export-skill
 ```
 
-`pi-onlyne` does not install launchd/systemd jobs and does not spawn a global daemon. If you want background supervision, wrap `onlyne --workspace /path/to/project run` yourself per workspace.
+`pi-onlyne` can manage a workspace-local daemon for the current Pi session. Prefer `/onlyne daemon start|stop|restart` or `/onlyne watch on` over shelling out `onlyne run` manually. Do not combine plugin-managed daemons with ad-hoc `nohup onlyne run`, `pkill -f 'onlyne run'`, or global launchd/systemd jobs for the same workspace.
 
 ## Typical workflow
 
 1. Initialize/configure Onlyne in your project.
-2. Start that workspace's daemon with `onlyne run`.
-3. Install this Pi extension.
-4. Start watching from pi:
+2. Install this Pi extension.
+3. Start the workspace daemon and watch from pi:
 
 ```text
 /onlyne watch on
@@ -74,16 +72,22 @@ When a normal user message arrives through Onlyne, pi receives it as a follow-up
 
 ```text
 /onlyne status
+/onlyne daemon start
+/onlyne daemon stop
+/onlyne daemon restart
 /onlyne watch on
 /onlyne watch off
 /onlyne config auto-start
 ```
 
-`/onlyne` supports argument completions for `status`, `watch on`, `watch off`, and `config auto-start`.
+`/onlyne` supports argument completions for `status`, `daemon start|stop|restart`, `watch on`, `watch off`, and `config auto-start`.
 
 ## Agent tools
 
 ```text
+onlyne_daemon_start()
+onlyne_daemon_stop()
+onlyne_daemon_restart()
 onlyne_reply({ text })
 onlyne_send({ channelId, text, rawText? })
 onlyne_broadcast({ targets, text, rawText? })
