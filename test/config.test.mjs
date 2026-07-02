@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, saveConfig, inboundModeFor } from '../dist/config.js';
+import { connectDaemon } from '../dist/onlyne.js';
 import { findWorkspace } from '../dist/workspace.js';
 
 test('config defaults and rules', () => {
@@ -18,6 +19,16 @@ test('config defaults and rules', () => {
     assert.equal(inboundModeFor(loaded, 'tg', '1'), 'queue-only');
     assert.equal(inboundModeFor(loaded, 'tg', '2'), 'muted');
     assert.equal(inboundModeFor(loaded, 'wx', 'x'), 'auto-handle');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('connectDaemon requires an already running workspace daemon', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-onlyne-'));
+  try {
+    await assert.rejects(
+      connectDaemon({ root: dir, onlyneDir: join(dir, '.onlyne'), socketPath: join(dir, '.onlyne/run/onlyne.sock') }),
+      /onlyne daemon is not running/
+    );
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "pi-onlyne",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Pi extension tools for sending messages through Onlyne.",
   "type": "module",
   "main": "./dist/index.js",

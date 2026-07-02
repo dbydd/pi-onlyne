@@ -46,25 +46,23 @@ For a one-off run without installing:
 pi -e npm:pi-onlyne
 ```
 
-You also need the `onlyne` CLI installed and an initialized workspace:
+You also need an initialized Onlyne workspace and a running workspace-local daemon:
 
 ```bash
 onlyne init
-# Optional: refresh the workspace-local agent skill
+onlyne run
+# Optional, in another shell: refresh the workspace-local agent skill
 onlyne export-skill
 ```
 
-If `onlyne` is not on `PATH`, set:
-
-```bash
-export ONLYNE_BIN=/path/to/onlyne
-```
+`pi-onlyne` does not install launchd/systemd jobs and does not spawn a global daemon. If you want background supervision, wrap `onlyne --workspace /path/to/project run` yourself per workspace.
 
 ## Typical workflow
 
 1. Initialize/configure Onlyne in your project.
-2. Install this Pi extension.
-3. Start watching from pi:
+2. Start that workspace's daemon with `onlyne run`.
+3. Install this Pi extension.
+4. Start watching from pi:
 
 ```text
 /onlyne watch on
@@ -118,7 +116,7 @@ onlyne_broadcast({
     { channelId: "telegram" },
     { channelId: "feishu" }
   ],
-  text: "# Release shipped\n\nVersion 0.3.1 is live."
+  text: "# Release shipped\n\nVersion 0.3.2 is live."
 })
 ```
 

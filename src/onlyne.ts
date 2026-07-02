@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { Workspace } from "./workspace.js";
 export interface OnlyneRequest { id: string; op: string; channel_id?: string; message_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
@@ -18,30 +18,16 @@ export function subscribe(socketPath: string, onLine: (line: any) => void): Sock
 	socket.on("data", (chunk) => { buf += chunk; for (;;) { const idx = buf.indexOf("\n"); if (idx < 0) break; const raw = buf.slice(0, idx); buf = buf.slice(idx + 1); if (!raw.trim()) continue; try { onLine(JSON.parse(raw)); } catch { /* ignore */ } } });
 	return socket;
 }
-export function spawnDaemon(ws: Workspace, onlyneBin = process.env.ONLYNE_BIN ?? "onlyne"): ChildProcess {
-	const script = `
-set -eu
-parent="$1"
-shift
-"$@" &
-child=$!
-cleanup() { kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; }
-trap cleanup INT TERM HUP EXIT
-while kill -0 "$parent" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done
-cleanup
-`;
-	return spawn("sh", ["-c", script, "onlyne-supervisor", String(process.pid), onlyneBin, "--workspace", ws.root, "run"], { cwd: ws.root, stdio: "ignore" });
-}
 export async function waitForSocket(socketPath: string, timeoutMs = 5000) {
 	const deadline = Date.now() + timeoutMs; let last: unknown;
 	while (Date.now() < deadline) { try { await request(socketPath, { id: "ping", op: "ping" }); return; } catch (e) { last = e; } await new Promise((r) => setTimeout(r, 100)); }
 	throw last instanceof Error ? last : new Error("onlyne socket not ready");
 }
-export async function connectOrSpawn(ws: Workspace): Promise<{ owner: "external" | "extension"; process?: ChildProcess }> {
-	try { await request(ws.socketPath, { id: "ping", op: "ping" }); return { owner: "external" }; } catch { /* spawn */ }
-	const process = spawnDaemon(ws); await waitForSocket(ws.socketPath); return { owner: "extension", process };
+export async function connectDaemon(ws: Workspace): Promise<{ owner: "external"; process?: ChildProcess }> {
+	try { await request(ws.socketPath, { id: "ping", op: "ping" }); return { owner: "external" }; }
+	catch (e) { throw new Error(`onlyne daemon is not running for ${ws.root}; start it with: onlyne --workspace ${ws.root} run`, { cause: e }); }
 }
-export function stopProcess(child?: ChildProcess) { if (!child || child.killed) return; child.kill("SIGTERM"); setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 1500).unref(); }
+export function stopProcess(_child?: ChildProcess) { /* pi-onlyne never owns the daemon; users supervise it themselves. */ }
 export async function loopback(socketPath: string, text: string, rawText = true): Promise<any> {
 	return request(socketPath, { id: `loopback-${Date.now()}`, op: "loopback", text, raw_text: rawText });
 }
