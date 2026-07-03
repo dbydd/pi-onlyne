@@ -14,7 +14,8 @@ export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
 }
 export function subscribe(socketPath: string, onLine: (line: any) => void): Socket {
 	const socket = createConnection(socketPath); let buf = ""; socket.setEncoding("utf8");
-	socket.on("connect", () => socket.write('{"id":"sub","op":"subscribe_events"}\n'));
+	socket.on("error", () => { /* stale socket / daemon restart: caller can reconnect via /onlyne watch on */ });
+	socket.on("connect", () => { if (!socket.destroyed) socket.write('{"id":"sub","op":"subscribe_events"}\n', () => {}); });
 	socket.on("data", (chunk) => { buf += chunk; for (;;) { const idx = buf.indexOf("\n"); if (idx < 0) break; const raw = buf.slice(0, idx); buf = buf.slice(idx + 1); if (!raw.trim()) continue; try { onLine(JSON.parse(raw)); } catch { /* ignore */ } } });
 	return socket;
 }
