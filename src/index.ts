@@ -5,14 +5,30 @@ import type { SendTarget } from "./onlyne.js";
 import { inboundModeFor, loadConfig, saveConfig } from "./config.js";
 import { findWorkspace, type Workspace } from "./workspace.js";
 
-interface State { cwd: string; workspace: Workspace | null; watching: boolean; owner: "external" | "extension" | "stopped"; child?: any; socket?: any; currentInbound?: { channelId: string; conversationId: string; messageId?: string; text: string; replied: boolean; noReply: boolean; reminders: number; fallbackText?: string }; lastValidOutput?: string }
+interface State { cwd: string; workspace: Workspace | null; watching: boolean; owner: "external" | "extension" | "stopped"; child?: any; socket?: any; reconnectTimer?: ReturnType<typeof setTimeout>; currentInbound?: { channelId: string; conversationId: string; messageId?: string; text: string; replied: boolean; noReply: boolean; reminders: number; fallbackText?: string }; lastValidOutput?: string }
 const state: State = { cwd: process.cwd(), workspace: null, watching: false, owner: "stopped" };
 const textResult = (text: string, details?: unknown) => ({ content: [{ type: "text" as const, text }], details });
 const currentConfig = () => loadConfig(state.cwd);
 function inboundText(data: any) { const msg = data?.data?.data ?? data?.data ?? data; const channelId = msg.channel_id ?? msg.channelId; const conversationId = msg.conversation_id ?? msg.conversationId; const messageId = msg.message_id ?? msg.messageId; const text = msg.text ?? msg.content ?? msg.body; return channelId && conversationId && typeof text === "string" ? { channelId, conversationId, messageId, text } : null; }
 function consumeIfNotified(inbound: { messageId?: string }) { if (state.workspace && inbound.messageId) void markConsumed(state.workspace.socketPath, inbound.messageId).catch(() => {}); }
-async function startWatch(pi: ExtensionAPI) { state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); const conn = await connectDaemon(state.workspace); state.owner = conn.owner; state.child = conn.process; state.socket = subscribe(state.workspace.socketPath, (line) => { if (!line?.event || line.type !== "inbound_message") return; const inbound = inboundText(line); if (!inbound) return; const mode = inboundModeFor(currentConfig(), inbound.channelId, inbound.conversationId); if (mode === "muted") return; if (inbound.channelId === "loopback") { if (mode === "auto-handle") pi.sendUserMessage(`Onlyne loopback activation${inbound.conversationId ? ` (${inbound.conversationId})` : ""}:\n\n${inbound.text}`, { deliverAs: "followUp" }); consumeIfNotified(inbound); return; } if (inbound.text.trim() === "/handshake") { consumeIfNotified(inbound); return; } state.currentInbound = { ...inbound, replied: false, noReply: false, reminders: 0 }; if (mode === "auto-handle") { pi.sendUserMessage(`Onlyne inbound message from ${inbound.channelId}/${inbound.conversationId}:\n\n${inbound.text}\n\nReply with onlyne_reply, or call onlyne_mark_no_reply if no reply is needed.`, { deliverAs: "followUp" }); consumeIfNotified(inbound); } }); state.watching = true; return `watching ${state.workspace.root} (${state.owner})`; }
-function stopWatch() { state.socket?.destroy(); state.socket = undefined; stopProcess(state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return "watch stopped"; }
+function scheduleReconnect(pi: ExtensionAPI) {
+	if (state.reconnectTimer || !state.watching || !state.workspace) return;
+	state.reconnectTimer = setTimeout(async () => {
+		state.reconnectTimer = undefined;
+		if (!state.watching) return;
+		try { await startWatch(pi); }
+		catch { scheduleReconnect(pi); }
+	}, 1000);
+}
+async function startWatch(pi: ExtensionAPI) {
+	state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration");
+	if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = undefined;
+	state.socket?.destroy(); state.socket = undefined;
+	const conn = await connectDaemon(state.workspace); state.owner = conn.owner; state.child = conn.process;
+	const socket = subscribe(state.workspace.socketPath, (line) => { if (!line?.event || line.type !== "inbound_message") return; const inbound = inboundText(line); if (!inbound) return; const mode = inboundModeFor(currentConfig(), inbound.channelId, inbound.conversationId); if (mode === "muted") return; if (inbound.channelId === "loopback") { if (mode === "auto-handle") pi.sendUserMessage(`Onlyne loopback activation${inbound.conversationId ? ` (${inbound.conversationId})` : ""}:\n\n${inbound.text}`, { deliverAs: "followUp" }); consumeIfNotified(inbound); return; } if (inbound.text.trim() === "/handshake") { consumeIfNotified(inbound); return; } state.currentInbound = { ...inbound, replied: false, noReply: false, reminders: 0 }; if (mode === "auto-handle") { pi.sendUserMessage(`Onlyne inbound message from ${inbound.channelId}/${inbound.conversationId}:\n\n${inbound.text}\n\nReply with onlyne_reply, or call onlyne_mark_no_reply if no reply is needed.`, { deliverAs: "followUp" }); consumeIfNotified(inbound); } }, () => { if (state.socket === socket) scheduleReconnect(pi); });
+	state.socket = socket; state.watching = true; return `watching ${state.workspace.root} (${state.owner})`;
+}
+function stopWatch() { if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = undefined; state.socket?.destroy(); state.socket = undefined; stopProcess(state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return "watch stopped"; }
 async function startDaemon() { state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); const conn = await connectDaemon(state.workspace, true); state.owner = conn.owner; state.child = conn.process; return `daemon ${state.owner === "extension" ? "started" : "already running"} for ${state.workspace.root}`; }
 async function stopDaemon() { if (!state.workspace) state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); state.socket?.destroy(); state.socket = undefined; await shutdownDaemon(state.workspace, state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return `daemon stopped for ${state.workspace.root}`; }
 async function restartDaemon() { await stopDaemon().catch(() => {}); return startDaemon(); }

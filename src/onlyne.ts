@@ -12,9 +12,11 @@ export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
 		socket.on("data", (chunk) => { data += chunk; const idx = data.indexOf("\n"); if (idx >= 0) { socket.end(); try { resolve(JSON.parse(data.slice(0, idx))); } catch (e) { reject(e); } } });
 	});
 }
-export function subscribe(socketPath: string, onLine: (line: any) => void): Socket {
-	const socket = createConnection(socketPath); let buf = ""; socket.setEncoding("utf8");
-	socket.on("error", () => { /* stale socket / daemon restart: caller can reconnect via /onlyne watch on */ });
+export function subscribe(socketPath: string, onLine: (line: any) => void, onDisconnect?: () => void): Socket {
+	const socket = createConnection(socketPath); let buf = ""; let closed = false; socket.setEncoding("utf8");
+	const disconnect = () => { if (closed) return; closed = true; onDisconnect?.(); };
+	socket.on("error", disconnect);
+	socket.on("close", disconnect);
 	socket.on("connect", () => { if (!socket.destroyed) socket.write('{"id":"sub","op":"subscribe_events"}\n', () => {}); });
 	socket.on("data", (chunk) => { buf += chunk; for (;;) { const idx = buf.indexOf("\n"); if (idx < 0) break; const raw = buf.slice(0, idx); buf = buf.slice(idx + 1); if (!raw.trim()) continue; try { onLine(JSON.parse(raw)); } catch { /* ignore */ } } });
 	return socket;
