@@ -47,7 +47,12 @@ export async function connectDaemon(ws: Workspace, startIfMissing = true): Promi
 	catch (e) {
 		if (!startIfMissing) throw new Error(`onlyne daemon is not running for ${ws.root}; start it with /onlyne daemon start`, { cause: e });
 		const child = spawnManagedDaemon(ws);
-		try { await waitForSocket(ws.socketPath); return { owner: "extension", process: child }; }
+		try {
+			await waitForSocket(ws.socketPath);
+			// 自己 spawn 的 daemon 已退出:竞态中输给了其他启动方,socket 归对方所有,降级为 external(只订阅、不 shutdown)。
+			if (child.exitCode !== null || child.signalCode !== null) return { owner: "external" };
+			return { owner: "extension", process: child };
+		}
 		catch (err) { stopProcess(child); throw err; }
 	}
 }

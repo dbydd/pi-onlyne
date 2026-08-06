@@ -5,12 +5,32 @@ import type { SendTarget } from "./onlyne.js";
 import { inboundModeFor, loadConfig, saveConfig } from "./config.js";
 import { findWorkspace, type Workspace } from "./workspace.js";
 
-interface State { cwd: string; workspace: Workspace | null; watching: boolean; owner: "external" | "extension" | "stopped"; child?: any; socket?: any; reconnectTimer?: ReturnType<typeof setTimeout>; currentInbound?: { channelId: string; conversationId: string; messageId?: string; text: string; replied: boolean; noReply: boolean; reminders: number; fallbackText?: string }; lastValidOutput?: string }
+interface State { cwd: string; workspace: Workspace | null; watching: boolean; owner: "external" | "extension" | "stopped"; child?: any; socket?: any; reconnectTimer?: ReturnType<typeof setTimeout>; reminderTimer?: ReturnType<typeof setTimeout>; currentInbound?: { channelId: string; conversationId: string; messageId?: string; text: string; replied: boolean; noReply: boolean; reminders: number; fallbackText?: string }; lastValidOutput?: string }
 const state: State = { cwd: process.cwd(), workspace: null, watching: false, owner: "stopped" };
 const textResult = (text: string, details?: unknown) => ({ content: [{ type: "text" as const, text }], details });
 const currentConfig = () => loadConfig(state.cwd);
 function inboundText(data: any) { const msg = data?.data?.data ?? data?.data ?? data; const channelId = msg.channel_id ?? msg.channelId; const conversationId = msg.conversation_id ?? msg.conversationId; const messageId = msg.message_id ?? msg.messageId; const text = msg.text ?? msg.content ?? msg.body; return channelId && conversationId && typeof text === "string" ? { channelId, conversationId, messageId, text } : null; }
 function consumeIfNotified(inbound: { messageId?: string }) { if (state.workspace && inbound.messageId) void markConsumed(state.workspace.socketPath, inbound.messageId).catch(() => {}); }
+function clearReminder() { if (state.reminderTimer) clearTimeout(state.reminderTimer); state.reminderTimer = undefined; }
+function needsReply(inbound = state.currentInbound) { return !!inbound && !inbound.replied && !inbound.noReply && !!state.workspace; }
+function scheduleReminder(pi: ExtensionAPI, delayMs = 30_000) {
+	clearReminder();
+	const inbound = state.currentInbound;
+	if (!inbound || !needsReply(inbound)) return;
+	state.reminderTimer = setTimeout(() => {
+		state.reminderTimer = undefined;
+		if (!needsReply(inbound) || state.currentInbound !== inbound) return;
+		const cfg = currentConfig();
+		if (cfg.outbound.defaultReplyMode === "explicit-only") return;
+		if (cfg.outbound.defaultReplyMode === "guarded-explicit" && inbound.reminders < cfg.outbound.guardedExplicit.reminders) {
+			if (inbound.reminders === 0) inbound.fallbackText = state.lastValidOutput;
+			inbound.reminders++;
+			pi.sendUserMessage(`Onlyne reminder ${inbound.reminders}/${cfg.outbound.guardedExplicit.reminders}: reply to ${inbound.channelId}/${inbound.conversationId} with onlyne_reply, or call onlyne_mark_no_reply.`, { deliverAs: "followUp" });
+			return;
+		}
+		void reply(inbound.fallbackText || state.lastValidOutput || cfg.outbound.guardedExplicit.noOutputFallbackText).catch(() => {});
+	}, delayMs);
+}
 function scheduleReconnect(pi: ExtensionAPI) {
 	if (state.reconnectTimer || !state.watching || !state.workspace) return;
 	state.reconnectTimer = setTimeout(async () => {
@@ -25,33 +45,22 @@ async function startWatch(pi: ExtensionAPI) {
 	if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = undefined;
 	state.socket?.destroy(); state.socket = undefined;
 	const conn = await connectDaemon(state.workspace); state.owner = conn.owner; state.child = conn.process;
-	const socket = subscribe(state.workspace.socketPath, (line) => { if (!line?.event || line.type !== "inbound_message") return; const inbound = inboundText(line); if (!inbound) return; const mode = inboundModeFor(currentConfig(), inbound.channelId, inbound.conversationId); if (mode === "muted") return; if (inbound.channelId === "loopback") { if (mode === "auto-handle") pi.sendUserMessage(`Onlyne loopback activation${inbound.conversationId ? ` (${inbound.conversationId})` : ""}:\n\n${inbound.text}`, { deliverAs: "followUp" }); consumeIfNotified(inbound); return; } if (inbound.text.trim() === "/handshake") { consumeIfNotified(inbound); return; } state.currentInbound = { ...inbound, replied: false, noReply: false, reminders: 0 }; if (mode === "auto-handle") { pi.sendUserMessage(`Onlyne inbound message from ${inbound.channelId}/${inbound.conversationId}:\n\n${inbound.text}\n\nReply with onlyne_reply, or call onlyne_mark_no_reply if no reply is needed.`, { deliverAs: "followUp" }); consumeIfNotified(inbound); } }, () => { if (state.socket === socket) scheduleReconnect(pi); });
+	const socket = subscribe(state.workspace.socketPath, (line) => { if (!line?.event || line.type !== "inbound_message") return; const inbound = inboundText(line); if (!inbound) return; const mode = inboundModeFor(currentConfig(), inbound.channelId, inbound.conversationId); if (mode === "muted") return; if (inbound.channelId === "loopback") { if (mode === "auto-handle") pi.sendUserMessage(`Onlyne loopback activation${inbound.conversationId ? ` (${inbound.conversationId})` : ""}:\n\n${inbound.text}`, { deliverAs: "followUp" }); consumeIfNotified(inbound); return; } if (inbound.text.trim() === "/handshake") { consumeIfNotified(inbound); return; } clearReminder(); state.currentInbound = { ...inbound, replied: false, noReply: false, reminders: 0 }; if (mode === "auto-handle") { pi.sendUserMessage(`Onlyne inbound message from ${inbound.channelId}/${inbound.conversationId}:\n\n${inbound.text}\n\nReply with onlyne_reply, or call onlyne_mark_no_reply if no reply is needed.`, { deliverAs: "followUp" }); consumeIfNotified(inbound); } }, () => { if (state.socket === socket) scheduleReconnect(pi); });
 	state.socket = socket; state.watching = true; return `watching ${state.workspace.root} (${state.owner})`;
 }
-function stopWatch() { if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = undefined; state.socket?.destroy(); state.socket = undefined; stopProcess(state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return "watch stopped"; }
+function stopWatch() { if (state.reconnectTimer) clearTimeout(state.reconnectTimer); state.reconnectTimer = undefined; clearReminder(); state.socket?.destroy(); state.socket = undefined; stopProcess(state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return "watch stopped"; }
 async function startDaemon() { state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); const conn = await connectDaemon(state.workspace, true); state.owner = conn.owner; state.child = conn.process; return `daemon ${state.owner === "extension" ? "started" : "already running"} for ${state.workspace.root}`; }
-async function stopDaemon() { if (!state.workspace) state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); state.socket?.destroy(); state.socket = undefined; await shutdownDaemon(state.workspace, state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return `daemon stopped for ${state.workspace.root}`; }
+async function stopDaemon() { if (!state.workspace) state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); clearReminder(); state.socket?.destroy(); state.socket = undefined; await shutdownDaemon(state.workspace, state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return `daemon stopped for ${state.workspace.root}`; }
 async function restartDaemon() { await stopDaemon().catch(() => {}); return startDaemon(); }
-async function reply(text: string) { if (!state.workspace) throw new Error("onlyne workspace not found"); const inbound = state.currentInbound; if (!inbound) throw new Error("no active inbound message"); const res = await sendWithRetry(state.workspace.socketPath, { channelId: inbound.channelId }, text, currentConfig().outbound.retry.attempts); if (res.ok) inbound.replied = true; return res; }
+async function reply(text: string) { if (!state.workspace) throw new Error("onlyne workspace not found"); const inbound = state.currentInbound; if (!inbound) throw new Error("no active inbound message"); const res = await sendWithRetry(state.workspace.socketPath, { channelId: inbound.channelId }, text, currentConfig().outbound.retry.attempts); if (res.ok) { inbound.replied = true; clearReminder(); } return res; }
 
 export default function onlyne(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => { const resumeWatch = state.watching; if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); state.cwd = ctx.cwd; state.workspace = findWorkspace(ctx.cwd); state.currentInbound = undefined; state.lastValidOutput = undefined; ctx.ui.setStatus("onlyne", state.workspace ? "onlyne: ready" : "onlyne: no .onlyne"); if ((currentConfig().watch.autoStart || resumeWatch) && state.workspace) { try { ctx.ui.notify(await startWatch(pi), "info"); } catch (e) { ctx.ui.notify(String(e), "warning"); } } });
 	pi.on("session_shutdown", async () => { if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); });
 	for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(sig, () => stopWatch());
 	pi.on("message_end", async (event) => { const text = typeof (event as any).content === "string" ? (event as any).content.trim() : ""; if (text && !text.startsWith("{") && !text.startsWith("[onlyne-internal]")) state.lastValidOutput = text; });
-	pi.on("turn_end", async () => {
-		const inbound = state.currentInbound;
-		if (!inbound || inbound.replied || inbound.noReply || !state.workspace) return;
-		const cfg = currentConfig();
-		if (cfg.outbound.defaultReplyMode === "explicit-only") return;
-		if (cfg.outbound.defaultReplyMode === "guarded-explicit" && inbound.reminders < cfg.outbound.guardedExplicit.reminders) {
-			if (inbound.reminders === 0) inbound.fallbackText = state.lastValidOutput;
-			inbound.reminders++;
-			pi.sendUserMessage(`Onlyne reminder ${inbound.reminders}/${cfg.outbound.guardedExplicit.reminders}: reply to ${inbound.channelId}/${inbound.conversationId} with onlyne_reply, or call onlyne_mark_no_reply.`, { deliverAs: "followUp" });
-			return;
-		}
-		await reply(inbound.fallbackText || state.lastValidOutput || cfg.outbound.guardedExplicit.noOutputFallbackText);
-	});
+	pi.on("agent_start", async () => clearReminder());
+	pi.on("agent_end", async () => scheduleReminder(pi));
 	pi.registerCommand("onlyne", {
 		description: "Onlyne watch/status/config commands",
 		getArgumentCompletions: (prefix: string) => {
@@ -81,5 +90,5 @@ export default function onlyne(pi: ExtensionAPI) {
 	pi.registerTool(defineTool({ name: "onlyne_send", label: "Onlyne send", description: "Send Markdown to the channel's configured Onlyne conversation. Set rawText=true only for literal plain text.", parameters: Type.Object({ channelId: Type.String(), text: Type.String(), rawText: Type.Optional(Type.Boolean()) }), executionMode: "parallel", async execute(_id, params) { if (!state.workspace) throw new Error("onlyne workspace not found"); const res = await sendWithRetry(state.workspace.socketPath, params, params.text, currentConfig().outbound.retry.attempts, params.rawText ?? false); return textResult(JSON.stringify(res), res); } }));
 	pi.registerTool(defineTool({ name: "onlyne_broadcast", label: "Onlyne broadcast", description: "Send Markdown to many configured Onlyne channels concurrently. Set rawText=true only for literal plain text.", parameters: Type.Object({ targets: Type.Array(Type.Object({ channelId: Type.String() })), text: Type.String(), rawText: Type.Optional(Type.Boolean()) }), executionMode: "parallel", async execute(_id, params) { if (!state.workspace) throw new Error("onlyne workspace not found"); const cfg = currentConfig(); const results = await broadcast(state.workspace.socketPath, params.targets as SendTarget[], params.text, cfg.outbound.retry.attempts, cfg.outbound.retry.concurrency, params.rawText ?? false); return textResult(JSON.stringify({ ok: results.every((r) => r.ok), results }), results); } }));
 	pi.registerTool(defineTool({ name: "onlyne_loopback", label: "Onlyne loopback", description: "Inject a local loopback activation message so scripts can wake the current Pi session. Set rawText=false for Markdown. FIFO alternative: write to .onlyne/channels/loopback/in.", parameters: Type.Object({ text: Type.String(), rawText: Type.Optional(Type.Boolean()) }), executionMode: "parallel", async execute(_id, params) { if (!state.workspace) throw new Error("onlyne workspace not found"); const res = await loopback(state.workspace.socketPath, params.text, params.rawText ?? true); return textResult(JSON.stringify(res), res); } }));
-	pi.registerTool(defineTool({ name: "onlyne_mark_no_reply", label: "Onlyne no reply", description: "Mark the current Onlyne inbound message as intentionally not replied.", parameters: Type.Object({ reason: Type.Optional(Type.String()) }), executionMode: "parallel", async execute(_id, params) { if (state.currentInbound) state.currentInbound.noReply = true; return textResult("marked no reply", params); } }));
+	pi.registerTool(defineTool({ name: "onlyne_mark_no_reply", label: "Onlyne no reply", description: "Mark the current Onlyne inbound message as intentionally not replied.", parameters: Type.Object({ reason: Type.Optional(Type.String()) }), executionMode: "parallel", async execute(_id, params) { if (state.currentInbound) { state.currentInbound.noReply = true; clearReminder(); } return textResult("marked no reply", params); } }));
 }
