@@ -7,9 +7,9 @@ Pi extension for Onlyne. Onlyne remains a workspace-local IM broker; this extens
 ## v1 Decisions
 
 - Watch is configurable; default manual.
-- `/onlyne` provides argument completions for its supported subcommands.
-- `watch on` connects only to the workspace-local `.onlyne/run/onlyne.sock`; if unavailable, it tells the user to start `onlyne --workspace <root> run`.
-- pi-onlyne never owns or launches the daemon. Users handle launchd/systemd/background scripts outside the extension, per workspace.
+- `/onlyne` provides argument completions for its supported subcommands, including daemon lifecycle commands.
+- `watch on` connects to the workspace-local `.onlyne/run/onlyne.sock`; if unavailable, it starts a Pi-owned workspace daemon.
+- `/onlyne daemon start|stop|restart` is the preferred lifecycle surface. Agents must not use ad-hoc `nohup onlyne run`, `pkill -f 'onlyne run'`, or global launchd/systemd jobs when pi-onlyne owns the daemon.
 - Inbound events come from Onlyne `subscribe_events`; no polling.
 - Inbound mode is rule-based: `auto-handle`, `queue-only`, or `muted`.
 - Outbound defaults to `guarded-explicit`: prefer tool reply, fallback to final text, else send configured error text.

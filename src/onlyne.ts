@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { Workspace } from "./workspace.js";
 export interface OnlyneRequest { id: string; op: string; channel_id?: string; message_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
@@ -12,9 +12,12 @@ export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
 		socket.on("data", (chunk) => { data += chunk; const idx = data.indexOf("\n"); if (idx >= 0) { socket.end(); try { resolve(JSON.parse(data.slice(0, idx))); } catch (e) { reject(e); } } });
 	});
 }
-export function subscribe(socketPath: string, onLine: (line: any) => void): Socket {
-	const socket = createConnection(socketPath); let buf = ""; socket.setEncoding("utf8");
-	socket.on("connect", () => socket.write('{"id":"sub","op":"subscribe_events"}\n'));
+export function subscribe(socketPath: string, onLine: (line: any) => void, onDisconnect?: () => void): Socket {
+	const socket = createConnection(socketPath); let buf = ""; let closed = false; socket.setEncoding("utf8");
+	const disconnect = () => { if (closed) return; closed = true; onDisconnect?.(); };
+	socket.on("error", disconnect);
+	socket.on("close", disconnect);
+	socket.on("connect", () => { if (!socket.destroyed) socket.write('{"id":"sub","op":"subscribe_events"}\n', () => {}); });
 	socket.on("data", (chunk) => { buf += chunk; for (;;) { const idx = buf.indexOf("\n"); if (idx < 0) break; const raw = buf.slice(0, idx); buf = buf.slice(idx + 1); if (!raw.trim()) continue; try { onLine(JSON.parse(raw)); } catch { /* ignore */ } } });
 	return socket;
 }
@@ -23,11 +26,41 @@ export async function waitForSocket(socketPath: string, timeoutMs = 5000) {
 	while (Date.now() < deadline) { try { await request(socketPath, { id: "ping", op: "ping" }); return; } catch (e) { last = e; } await new Promise((r) => setTimeout(r, 100)); }
 	throw last instanceof Error ? last : new Error("onlyne socket not ready");
 }
-export async function connectDaemon(ws: Workspace): Promise<{ owner: "external"; process?: ChildProcess }> {
-	try { await request(ws.socketPath, { id: "ping", op: "ping" }); return { owner: "external" }; }
-	catch (e) { throw new Error(`onlyne daemon is not running for ${ws.root}; start it with: onlyne --workspace ${ws.root} run`, { cause: e }); }
+function spawnManagedDaemon(ws: Workspace): ChildProcess {
+	const bin = process.env.ONLYNE_BIN || "onlyne";
+	const script = `
+parent="$1"; shift
+"$@" &
+child=$!
+trap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null' INT TERM HUP EXIT
+while kill -0 "$parent" 2>/dev/null; do
+  kill -0 "$child" 2>/dev/null || { wait "$child"; exit $?; }
+  sleep 1
+done
+kill "$child" 2>/dev/null
+wait "$child" 2>/dev/null
+`;
+	return spawn("sh", ["-c", script, "onlyne-supervisor", String(process.pid), bin, "--workspace", ws.root, "run"], { stdio: "ignore" });
 }
-export function stopProcess(_child?: ChildProcess) { /* pi-onlyne never owns the daemon; users supervise it themselves. */ }
+export async function connectDaemon(ws: Workspace, startIfMissing = true): Promise<{ owner: "external" | "extension"; process?: ChildProcess }> {
+	try { await request(ws.socketPath, { id: "ping", op: "ping" }); return { owner: "external" }; }
+	catch (e) {
+		if (!startIfMissing) throw new Error(`onlyne daemon is not running for ${ws.root}; start it with /onlyne daemon start`, { cause: e });
+		const child = spawnManagedDaemon(ws);
+		try {
+			await waitForSocket(ws.socketPath);
+			// 自己 spawn 的 daemon 已退出:竞态中输给了其他启动方,socket 归对方所有,降级为 external(只订阅、不 shutdown)。
+			if (child.exitCode !== null || child.signalCode !== null) return { owner: "external" };
+			return { owner: "extension", process: child };
+		}
+		catch (err) { stopProcess(child); throw err; }
+	}
+}
+export async function shutdownDaemon(ws: Workspace, child?: ChildProcess) {
+	try { await request(ws.socketPath, { id: `shutdown-${Date.now()}`, op: "shutdown" }); } catch { /* may already be down */ }
+	stopProcess(child);
+}
+export function stopProcess(child?: ChildProcess) { if (!child || child.killed) return; try { child.kill("SIGTERM"); } catch { /* ignore */ } }
 export async function loopback(socketPath: string, text: string, rawText = true): Promise<any> {
 	return request(socketPath, { id: `loopback-${Date.now()}`, op: "loopback", text, raw_text: rawText });
 }
