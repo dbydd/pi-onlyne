@@ -36,6 +36,14 @@ Messages are Markdown by default, matching normal agent output. Use `rawText: tr
 
 ## Install
 
+You need the Onlyne daemon binary (published on crates.io):
+
+```bash
+cargo install onlyne
+```
+
+Then install this Pi extension:
+
 ```bash
 pi install npm:pi-onlyne
 ```
