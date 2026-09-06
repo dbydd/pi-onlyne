@@ -1,80 +1,107 @@
 # pi-onlyne
 
-**Give pi agents a real IM inbox/outbox through [Onlyne](https://github.com/dbydd/onlyne).**
+`pi-onlyne` gives [Pi](https://github.com/badlogic/pi-mono) agents a local IM inbox and outbox through [Onlyne](https://github.com/dbydd/onlyne). The extension connects Pi to an Onlyne workspace, exposes message tools, and delivers subscribed events as Pi follow-ups.
 
-`pi-onlyne` is the Pi extension for Onlyne. It adds tools and commands to pi so an agent can receive messages from IM channels and send replies without pretending that a chat platform is a terminal, a browser tab, or a custom workflow engine.
+## Runtime requirements
 
-## What is Onlyne?
+- Node.js 20 or newer
+- Pi 0.84 or newer with the `pi` command available in `PATH`
+- `onlyne` 0.4.x installed with `cargo install onlyne`, or a compatible local build
+- An initialized Onlyne workspace with `.onlyne/config.toml`
+- A configured model/provider for Pi agent replies
+- Unix domain socket support on the host
 
-[Onlyne](https://github.com/dbydd/onlyne) is a small workspace-local IM channel daemon. It runs in your project directory, keeps its config/state under `.onlyne/`, and brokers local agent calls to real messaging adapters such as Telegram, Feishu/Lark, QQ Bot, and WeChat.
-
-Onlyne is deliberately narrow:
-
-- local workspace daemon, not a global cloud service
-- channel broker, not an agent runtime
-- Unix socket / stdio friendly, not a web dashboard
-- local history and event stream, not a heavy message platform
-
-## What does this extension do?
-
-`pi-onlyne` connects pi to an existing Onlyne workspace and exposes Onlyne as native pi tools.
-
-Onlyne channels are singleton-routed: each enabled channel has one `bind_conversation_id` set in config or by sending `/handshake` from the desired conversation, so pi tools take `channelId` only.
-
-With this extension, a pi agent can:
-
-- watch an Onlyne workspace for inbound IM messages
-- surface inbound messages into the current pi session
-- reply to the current inbound message
-- send a message to a channel's configured conversation
-- broadcast the same message to multiple conversations
-- inject a local loopback activation so background scripts can wake the session
-- share Onlyne's FIFO consume cursor so `.onlyne/channels/<channel>/out` does not re-read messages already surfaced to pi
-- mark an inbound message as intentionally not replied
-
-Messages are Markdown by default, matching normal agent output. Use `rawText: true` only when the message must be sent literally. Onlyne can also expose FIFO IO under `.onlyne/channels/<channel>/in|out`; pi-onlyne stays on the socket/event API and advances the shared consume cursor after delivering inbound follow-ups.
+The extension supports macOS and Linux. Each workspace keeps daemon state, channel credentials, history, sockets, and logs under its own `.onlyne/` directory.
 
 ## Install
 
-You need the Onlyne daemon binary (published on crates.io):
-
-```bash
-cargo install onlyne
-```
-
-Then install this Pi extension:
+Install the published Pi package:
 
 ```bash
 pi install npm:pi-onlyne
 ```
 
-For a one-off run without installing:
+Run it for one Pi process:
 
 ```bash
 pi -e npm:pi-onlyne
 ```
 
-You also need an initialized Onlyne workspace:
+Install the package from a local checkout during development:
 
 ```bash
+cd path/to/pi-onlyne
+npm install
+npm run check
+pi install .
+```
+
+The package publishes `dist/`, `README.md`, `SPEC.md`, and `LICENSE`. `prepublishOnly` runs the build and test suite.
+
+## Prepare an Onlyne workspace
+
+Run these commands from the project that should receive the messages:
+
+```bash
+cargo install onlyne
 onlyne init
-# Optional: refresh the workspace-local agent skill
 onlyne export-skill
 ```
 
-`pi-onlyne` can manage a workspace-local daemon for the current Pi session. Prefer `/onlyne daemon start|stop|restart` or `/onlyne watch on` over shelling out `onlyne run` manually. Do not combine plugin-managed daemons with ad-hoc `nohup onlyne run`, `pkill -f 'onlyne run'`, or global launchd/systemd jobs for the same workspace.
+Configure a channel in `.onlyne/config.toml` and place secrets in `.onlyne/.env`. Examples:
 
-## Typical workflow
+```toml
+[adapters.telegram]
+enabled = true
 
-1. Initialize/configure Onlyne in your project.
-2. Install this Pi extension.
-3. Start the workspace daemon and watch from pi:
+[adapters.feishu]
+enabled = true
 
-```text
-/onlyne watch on
+[adapters.qqbot]
+enabled = true
+
+[adapters.wechat]
+enabled = true
 ```
 
-When a normal user message arrives through Onlyne, pi receives it as a follow-up message. Onlyne control messages such as `/handshake` are consumed silently. The agent can then call `onlyne_reply`, or deliberately call `onlyne_mark_no_reply`.
+Use the matching `onlyne auth` command for Feishu, QQ Bot, or WeChat. Telegram uses `TELEGRAM_BOT_TOKEN` in `.onlyne/.env`. Bind a target conversation with `bind_conversation_id`, or send `/handshake` from the desired conversation after the adapter starts.
+
+Start the daemon from the project root:
+
+```bash
+onlyne run
+```
+
+A Pi session can start or connect to the daemon through `/onlyne daemon start`.
+
+## Configure Pi behavior
+
+The extension reads `.pi/onlyne.json` from the current Pi project. The default configuration is:
+
+```json
+{
+  "watch": { "autoStart": false },
+  "inbound": { "defaultMode": "auto-handle", "rules": [] },
+  "outbound": {
+    "defaultReplyMode": "guarded-explicit",
+    "guardedExplicit": {
+      "reminders": 2,
+      "noOutputFallbackText": "Onlyne/Pi error: no valid reply was produced."
+    },
+    "retry": { "attempts": 2, "concurrency": 8 }
+  }
+}
+```
+
+Enable automatic subscription when Pi starts:
+
+```json
+{
+  "watch": { "autoStart": true }
+}
+```
+
+The extension merges partial JSON with the defaults. `inbound.rules` accepts channel and optional conversation selectors with `auto-handle`, `queue-only`, or `muted` modes. `outbound.defaultReplyMode` accepts `guarded-explicit`, `explicit-only`, or `implicit-final`.
 
 ## Commands
 
@@ -86,9 +113,12 @@ When a normal user message arrives through Onlyne, pi receives it as a follow-up
 /onlyne watch on
 /onlyne watch off
 /onlyne config auto-start
+/onlyne swarm on
+/onlyne swarm off
+/onlyne swarm status
 ```
 
-`/onlyne` supports argument completions for `status`, `daemon start|stop|restart`, `watch on`, `watch off`, and `config auto-start`.
+`watch on` subscribes to the current workspace event stream. Incoming channel messages become Pi follow-ups. A normal inbound message receives `onlyne_reply`, and an intentional omission receives `onlyne_mark_no_reply`.
 
 ## Agent tools
 
@@ -101,7 +131,10 @@ onlyne_send({ channelId, text, rawText? })
 onlyne_broadcast({ targets, text, rawText? })
 onlyne_loopback({ text, rawText? })
 onlyne_mark_no_reply({ reason? })
+onlyne_swarm_reply({ text, rawText? })
 ```
+
+Messages use Markdown by default. `rawText: true` preserves literal text for scripts and protocol payloads.
 
 ### Send one message
 
@@ -112,57 +145,76 @@ onlyne_send({
 })
 ```
 
-### Send literal text
-
-```ts
-onlyne_send({
-  channelId: "telegram",
-  text: "# not a heading",
-  rawText: true
-})
-```
-
 ### Broadcast
 
 ```ts
 onlyne_broadcast({
-  targets: [
-    { channelId: "telegram" },
-    { channelId: "feishu" }
-  ],
-  text: "# Release shipped\n\nVersion 0.3.4 is live."
+  targets: [{ channelId: "telegram" }, { channelId: "feishu" }],
+  text: "# Release shipped\n\nVersion 0.4.0 is live."
 })
 ```
 
 ### Loopback wake-up
 
-From any local script, inject an inbound message into the current Onlyne daemon:
+A local script can wake the current Pi session through the daemon socket:
 
 ```bash
 onlyne client '{"id":"wake","op":"loopback","text":"background job finished","raw_text":true}'
-# or, with FIFO IO enabled by the daemon:
-printf 'background job finished\n' > .onlyne/channels/loopback/in
 ```
 
-Pi treats channel `loopback` as wake-up-only: it sends a follow-up to the session, but does not expect `onlyne_reply`.
+The extension also supports `.onlyne/channels/loopback/in` when FIFO IO is enabled.
 
-## Local state
+## Swarm mode
 
-This extension stores its own pi-side config at:
+Swarm mode lets `onlyne-swarm` own task routing for a generated agent workspace. Enable it in `.onlyne/config.toml`:
 
-```text
-.pi/onlyne.json
+```toml
+[swarm]
+enabled = true
 ```
 
-Onlyne itself stores workspace state under:
+A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one task atomically, receives child callbacks through `followUp`, and completes with `onlyne_swarm_reply`. `onlyne_mark_no_reply` closes a task without an outbound result.
 
-```text
-.onlyne/
+For automatic startup in a generated workspace, add `.pi/onlyne.json`:
+
+```json
+{
+  "watch": { "autoStart": true },
+  "outbound": {
+    "defaultReplyMode": "explicit-only",
+    "retry": { "attempts": 4, "concurrency": 8 }
+  }
+}
 ```
 
-That keeps each project isolated: different workspaces can run different Onlyne daemons, channels, histories, and policies.
+The swarm scheduler starts Pi with normal extension discovery. The configured retry extension remains available in swarm sessions. See the [onlyne-swarm README](https://github.com/dbydd/onlyne-swarm) for the graph template, scheduler commands, Orca requirements, and test runner.
+
+## Local state and security
+
+Pi-side settings live at `.pi/onlyne.json`. Onlyne stores credentials, history, sockets, logs, and adapter state under `.onlyne/`. Keep `.onlyne/.env` private. Review package source before installing third-party extensions because Pi extensions run with the permissions of the Pi process.
+
+## Release notes
+
+This checkout is version 0.5.0 with swarm support already merged into the `dev` branch. npm currently publishes 0.4.0 as the latest tag. Run `npm run check` before any release so the build and tests regenerate `dist/`. Publish with `npm publish` after reviewing the generated tarball.
+
+## Development
+
+```bash
+npm install
+npm run check
+npm pack --dry-run
+```
+
+`npm run check` compiles TypeScript and runs the Node test suite. The tests cover configuration, workspace discovery, daemon connection, swarm header parsing, and the atomic swarm task slot.
 
 ## Links
 
-- Onlyne main repository: https://github.com/dbydd/onlyne
-- pi-onlyne package: https://www.npmjs.com/package/pi-onlyne
+- Onlyne: https://github.com/dbydd/onlyne
+- Onlyne documentation: https://github.com/dbydd/onlyne/tree/dev/docs
+- npm package: https://www.npmjs.com/package/pi-onlyne
+- pi-onlyne source: https://github.com/dbydd/pi-onlyne
+- onlyne-swarm: https://github.com/dbydd/onlyne-swarm
+
+## License
+
+MIT
