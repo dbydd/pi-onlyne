@@ -50,3 +50,25 @@ Stored in project `.pi/onlyne.json`:
 - Auth QR/secret editing TUI.
 - Schedules.
 - Target groups.
+
+## Swarm mode (v2)
+
+- Switch: `/onlyne swarm on|off|status`. On/off persists to the workspace
+  `.onlyne/config.toml` `[swarm] enabled` flag and restarts watch. Status line
+  and `session_start` banner report `swarm` vs `ready`.
+- When swarm is on, generic in/out auto-handling is disabled: the scheduler owns
+  input/output. Only loopback messages carrying a `---swarm` body header enter
+  the session, via the `followUp` task queue.
+- Session model: one session carries exactly one task (atomic slot). A new
+  header claims the slot; headers with matching `reply_to`/`task_id` arrive as
+  followUp callbacks for the suspended parent; headers for other tasks while
+  busy are ignored with an `[onlyne-internal]` notice.
+- Startup handshake: swarm watch sends the `swarm_ready` op
+  (`{workspace, terminal_handle}`) so the scheduler can match a pending task.
+  `ONLYNE_SWARM_TASK` env and `ORCA_TERMINAL_HANDLE`/`ONLYNE_TERMINAL_HANDLE`
+  provide fallback correlation.
+- Tools: `onlyne_swarm_reply({text, rawText?})` writes the out message carrying
+  the task header (the scheduler's success signal) and ends the task slot.
+  `onlyne_mark_no_reply` additionally clears the swarm slot.
+- Body protocol lives in `src/swarm.ts` (`parseSwarmHeader`,
+  `renderSwarmHeader`, `readSwarmEnabled`); covered by `test/swarm.test.mjs`.
