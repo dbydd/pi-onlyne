@@ -41,7 +41,7 @@ test('swarm flag reads [swarm] enabled', () => {
 test('swarm slot: first task claims, second task ignored, clear resets', async () => {
   const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
   const seen = [];
-  const pi = { sendUserMessage: (text, opts) => { seen.push({ text, deliverAs: opts?.deliverAs }); } };
+  const pi = { sendMessage: (msg, opts) => { seen.push({ text: msg.content, deliverAs: opts?.deliverAs, triggerTurn: opts?.triggerTurn }); } };
   const slot = __swarmSlotForTest();
   const idA = '11111111-2222-4333-8444-555555555555';
   const taskA = `---swarm\ntask_id: ${idA}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\ndo A\n`;
@@ -52,6 +52,7 @@ test('swarm slot: first task claims, second task ignored, clear resets', async (
   assert.equal(slot.handle(pi, taskB), 'not-swarm');
   assert.equal(slot.handle(pi, 'plain hello'), 'not-swarm');
   assert.ok(seen.every((m) => m.deliverAs === 'followUp'));
+  assert.ok(seen.every((m) => m.triggerTurn === true), 'cold start needs triggerTurn');
   assert.match(seen[0].text, /Onlyne swarm task/);
   slot.clear();
   assert.equal(slot.taskId(), undefined);
@@ -59,7 +60,7 @@ test('swarm slot: first task claims, second task ignored, clear resets', async (
 
 test('swarm slot: noteSpawned tracks spawned children', async () => {
   const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
-  const pi = { sendUserMessage: () => {} };
+  const pi = { sendMessage: () => {} };
   const slot = __swarmSlotForTest();
   const idA = '11111111-2222-4333-8444-555555555555';
   slot.handle(pi, `---swarm\ntask_id: ${idA}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\ndo A\n`);

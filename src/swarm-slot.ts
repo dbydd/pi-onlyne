@@ -2,13 +2,8 @@ import { parseSwarmHeader } from "./swarm.js";
 
 export type SwarmHandleResult = "claimed" | "not-swarm";
 
-export interface SwarmSlotMessage {
-	text: string;
-	deliverAs: "followUp";
-}
-
 export interface SwarmPi {
-	sendUserMessage: (text: string, opts: { deliverAs: "followUp" }) => void;
+	sendMessage: (message: { customType: string; content: string; display: boolean; details?: unknown }, opts: { triggerTurn: true; deliverAs: "followUp" }) => void;
 }
 
 /**
@@ -33,9 +28,12 @@ export class SwarmSlot {
 			this.transfer = header.transfer_send_to;
 			this.attempt = header.attempt;
 			this.sentChildIds = [];
-			pi.sendUserMessage(
-				`Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`,
-				{ deliverAs: "followUp" },
+			// Cold start needs triggerTurn: followUp alone only queues behind an
+			// active turn, and a fresh session has none. sendMessage with
+			// triggerTurn starts the model turn immediately.
+			pi.sendMessage(
+				{ customType: "onlyne-swarm-task", content: `Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`, display: true },
+				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 			return "claimed";
 		}

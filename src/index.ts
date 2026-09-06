@@ -241,7 +241,7 @@ function scheduleSwarmExitReminder(pi: ExtensionAPI, delayMs = 30_000) {
 		state.reminderTimer = undefined;
 		if (!state.swarmTask) return;
 		if (state.swarmTask) {
-			pi.sendUserMessage(`Swarm hop ${state.swarmTask.taskId} has no exit yet. Call swarm_complete with the handover summary, or swarm_quit when there is nothing to do.`, { deliverAs: "followUp" });
+{ const p = pi as any; if (typeof p.sendMessage === "function") p.sendMessage({ customType: "onlyne-swarm-reminder", content: `Swarm hop ${state.swarmTask.taskId} has no exit yet. Call swarm_complete with the handover summary, or swarm_quit when there is nothing to do.`, display: true }, { triggerTurn: true, deliverAs: "followUp" }); else pi.sendUserMessage(`Swarm hop ${state.swarmTask.taskId} has no exit yet. Call swarm_complete with the handover summary, or swarm_quit when there is nothing to do.`, { deliverAs: "followUp" }); }
 			state.reminderTimer = setTimeout(() => {
 				state.reminderTimer = undefined;
 				if (state.swarmTask) void swarmQuit("auto-quit: no explicit exit").catch(() => {});
