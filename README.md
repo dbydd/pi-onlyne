@@ -150,7 +150,7 @@ onlyne_send({
 ```ts
 onlyne_broadcast({
   targets: [{ channelId: "telegram" }, { channelId: "feishu" }],
-  text: "# Release shipped\n\nVersion 0.4.0 is live."
+  text: "# Release shipped\n\nVersion 0.6.0 is live."
 })
 ```
 
@@ -195,7 +195,7 @@ Pi-side settings live at `.pi/onlyne.json`. Onlyne stores credentials, history, 
 
 ## Release notes
 
-This checkout is version 0.5.0 with swarm support already merged into the `dev` branch. npm currently publishes 0.4.0 as the latest tag. Run `npm run check` before any release so the build and tests regenerate `dist/`. Publish with `npm publish` after reviewing the generated tarball.
+This checkout is version 0.6.0 with swarm support already merged into the `dev` branch. npm currently publishes 0.4.0 as the latest tag. Run `npm run check` before any release so the build and tests regenerate `dist/`. Publish with `npm publish` after reviewing the generated tarball.
 
 ## Development
 
