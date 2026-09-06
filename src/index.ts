@@ -85,13 +85,16 @@ async function startWatch(pi: ExtensionAPI) {
 		// Report readiness so the scheduler can match a pending task (fork+exec: any
 		// clean ready session on this workspace path may take it).
 		const ws = state.workspace;
+		// Priority 1 (above default 0): the scheduler consumes at MAX, then we
+		// take the event at tier 1 so it also reaches the session. A plain
+		// tier-0 subscription would starve whenever the scheduler consumes.
 		const socket = subscribe(ws.socketPath, (line) => {
 			if (!line?.event) return;
 			if (line.type !== "inbound_message") return;
 			const inbound = inboundText(line);
 			if (!inbound || inbound.channelId !== "loopback") return;
 			handleSwarmInbound(pi, inbound.text, line.event_seq);
-		}, () => { if (state.socket === socket) scheduleReconnect(pi); });
+		}, () => { if (state.socket === socket) scheduleReconnect(pi); }, { priority: 1 });
 		state.socket = socket; state.watching = true;
 		const task = envTaskId();
 		try { await swarmReady(ws.socketPath, ws.root, terminalHandle()); } catch { /* scheduler may read env fallback */ }
