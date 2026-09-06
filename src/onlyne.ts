@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { Workspace } from "./workspace.js";
-export interface OnlyneRequest { id: string; op: string; channel_id?: string; message_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number }
+export interface OnlyneRequest { id: string; op: string; channel_id?: string; message_id?: string; text?: string; format?: "plain" | "markdown"; raw_text?: boolean; limit?: number; priority?: number; consume_timeout_ms?: number; event_seq?: number }
 export interface SendTarget { channelId: string }
 export interface SendResult extends SendTarget { ok: boolean; error?: string }
 export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
@@ -12,12 +12,12 @@ export function request(socketPath: string, req: OnlyneRequest): Promise<any> {
 		socket.on("data", (chunk) => { data += chunk; const idx = data.indexOf("\n"); if (idx >= 0) { socket.end(); try { resolve(JSON.parse(data.slice(0, idx))); } catch (e) { reject(e); } } });
 	});
 }
-export function subscribe(socketPath: string, onLine: (line: any) => void, onDisconnect?: () => void): Socket {
+export function subscribe(socketPath: string, onLine: (line: any) => void, onDisconnect?: () => void, opts?: { priority?: number; consumeTimeoutMs?: number }): Socket {
 	const socket = createConnection(socketPath); let buf = ""; let closed = false; socket.setEncoding("utf8");
 	const disconnect = () => { if (closed) return; closed = true; onDisconnect?.(); };
 	socket.on("error", disconnect);
 	socket.on("close", disconnect);
-	socket.on("connect", () => { if (!socket.destroyed) socket.write('{"id":"sub","op":"subscribe_events"}\n', () => {}); });
+	socket.on("connect", () => { if (!socket.destroyed) socket.write(`${JSON.stringify({ id: "sub", op: "subscribe_events", ...(opts?.priority !== undefined ? { priority: opts.priority } : {}), ...(opts?.consumeTimeoutMs !== undefined ? { consume_timeout_ms: opts.consumeTimeoutMs } : {}) })}\n`, () => {}); });
 	socket.on("data", (chunk) => { buf += chunk; for (;;) { const idx = buf.indexOf("\n"); if (idx < 0) break; const raw = buf.slice(0, idx); buf = buf.slice(idx + 1); if (!raw.trim()) continue; try { onLine(JSON.parse(raw)); } catch { /* ignore */ } } });
 	return socket;
 }
@@ -61,6 +61,12 @@ export async function shutdownDaemon(ws: Workspace, child?: ChildProcess) {
 	stopProcess(child);
 }
 export function stopProcess(child?: ChildProcess) { if (!child || child.killed) return; try { child.kill("SIGTERM"); } catch { /* ignore */ } }
+export async function swarmReady(socketPath: string, workspace: string, terminalHandle: string): Promise<any> {
+	return request(socketPath, { id: `swarm-ready-${Date.now()}`, op: "swarm_ready", text: JSON.stringify({ workspace, terminal_handle: terminalHandle }) } as any);
+}
+export async function consumeEvent(socket: Socket, eventSeq: number): Promise<void> {
+	return new Promise((resolve) => { try { socket.write(`${JSON.stringify({ id: `consume-${Date.now()}`, op: "consume", event_seq: eventSeq })}\n`, () => resolve()); } catch { resolve(); } });
+}
 export async function loopback(socketPath: string, text: string, rawText = true): Promise<any> {
 	return request(socketPath, { id: `loopback-${Date.now()}`, op: "loopback", text, raw_text: rawText });
 }
