@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Swarm header carried in the message body (upper-layer protocol, see PROTOCOL.md). */
-export interface SwarmHeader { task_id: string; from: string; reply_to: string; attempt: number }
+export interface SwarmHeader { task_id: string; from: string; transfer_send_to: string; attempt: number }
 export interface SwarmMessage { header: SwarmHeader; payload: string }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,8 +28,9 @@ export function parseSwarmHeader(text: string): SwarmMessage | null {
 	}
 	let task_id: string | undefined;
 	let from = ".";
-	let reply_to = "";
+	let transfer_send_to = "";
 	let attempt = 1;
+	let sawTransfer = false;
 	for (const line of headRaw.split("\n")) {
 		const t = line.trim();
 		if (!t || t.startsWith("#")) continue;
@@ -39,16 +40,18 @@ export function parseSwarmHeader(text: string): SwarmMessage | null {
 		const v = t.slice(i + 1).trim().replace(/^["']|["']$/g, "");
 		if (k === "task_id") task_id = v;
 		else if (k === "from") from = v || ".";
-		else if (k === "reply_to") reply_to = v;
+		else if (k === "transfer_send_to") { transfer_send_to = v; sawTransfer = true; }
+		else if (k === "reply_to") return null;
 		else if (k === "attempt") attempt = Number.parseInt(v, 10) || 1;
 	}
+	if (!sawTransfer) return null;
 	if (!task_id || !UUID_RE.test(task_id.trim())) return null;
-	return { header: { task_id: task_id.trim(), from, reply_to, attempt }, payload };
+	return { header: { task_id: task_id.trim(), from, transfer_send_to, attempt }, payload };
 }
 
 /** Render a swarm body header in front of a Markdown payload. */
 export function renderSwarmHeader(header: SwarmHeader, role: string, payloadMarkdown: string): string {
-	let s = `---swarm\ntask_id: ${header.task_id}\nfrom: ${header.from}\nreply_to: ${header.reply_to}\nattempt: ${header.attempt}\n---\n`;
+	let s = `---swarm\ntask_id: ${header.task_id}\nfrom: ${header.from}\ntransfer_send_to: ${header.transfer_send_to}\nattempt: ${header.attempt}\n---\n`;
 	if (role) s += `## role: ${role}\n\n${role}\n`;
 	s += payloadMarkdown;
 	if (!s.endsWith("\n")) s += "\n";

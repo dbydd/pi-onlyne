@@ -5,7 +5,7 @@ export function findWorkspace(start: string): Workspace | null {
 	let dir = resolve(start);
 	for (;;) {
 		const onlyneDir = join(dir, ".onlyne");
-		if (existsSync(onlyneDir)) return { root: dir, onlyneDir, socketPath: join(onlyneDir, "run", "onlyne.sock") };
+		if (existsSync(onlyneDir)) return { root: dir, onlyneDir, socketPath: join(onlyneDir, "run", "s") };
 		const parent = dirname(dir);
 		if (parent === dir) return null;
 		dir = parent;

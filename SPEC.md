@@ -8,7 +8,7 @@ Pi extension for Onlyne. Onlyne remains a workspace-local IM broker; this extens
 
 - Watch is configurable; default manual.
 - `/onlyne` provides argument completions for its supported subcommands, including daemon lifecycle commands.
-- `watch on` connects to the workspace-local `.onlyne/run/onlyne.sock`; if unavailable, it starts a Pi-owned workspace daemon.
+- `watch on` connects to the workspace-local `.onlyne/run/s`; if unavailable, it starts a Pi-owned workspace daemon.
 - `/onlyne daemon start|stop|restart` is the preferred lifecycle surface. Agents must not use ad-hoc `nohup onlyne run`, `pkill -f 'onlyne run'`, or global launchd/systemd jobs when pi-onlyne owns the daemon.
 - Inbound events come from Onlyne `subscribe_events`; no polling.
 - Inbound mode is rule-based: `auto-handle`, `queue-only`, or `muted`.
@@ -38,11 +38,25 @@ Stored in project `.pi/onlyne.json`:
 
 ## Tools
 
+Normal mode (default):
+
 - `onlyne_reply({ text })`
 - `onlyne_send({ channelId, text, rawText? })`
 - `onlyne_broadcast({ targets, text, rawText? })`
 - `onlyne_loopback({ text, rawText? })`
 - `onlyne_mark_no_reply({ reason? })`
+- `onlyne_daemon_start/stop/restart`
+
+Swarm mode (`[swarm] enabled`, see below):
+
+- `swarm_complete({ text })`
+- `swarm_quit({ reason? })`
+- `swarm_send({ to, text })`
+- `swarm_status()`
+- `onlyne_daemon_start/stop/restart`
+
+One session sees one toolset. The surface is chosen at `session_start` from
+`[swarm]` and applied with `setActiveTools` when the Pi API exists.
 
 ## Deferred
 
@@ -51,7 +65,7 @@ Stored in project `.pi/onlyne.json`:
 - Schedules.
 - Target groups.
 
-## Swarm mode (v2)
+## Swarm mode (v2, amendment-1)
 
 - Switch: `/onlyne swarm on|off|status`. On/off persists to the workspace
   `.onlyne/config.toml` `[swarm] enabled` flag and restarts watch. Status line
@@ -59,16 +73,26 @@ Stored in project `.pi/onlyne.json`:
 - When swarm is on, generic in/out auto-handling is disabled: the scheduler owns
   input/output. Only loopback messages carrying a `---swarm` body header enter
   the session, via the `followUp` task queue.
-- Session model: one session carries exactly one task (atomic slot). A new
-  header claims the slot; headers with matching `reply_to`/`task_id` arrive as
-  followUp callbacks for the suspended parent; headers for other tasks while
-  busy are ignored with an `[onlyne-internal]` notice.
+- Session model: one session carries exactly one hop, no exceptions. A new
+  header claims the slot; any further header while claimed is ignored
+  (the scheduler always opens a new session, so this guard never fires
+  on the normal path). No waiting, no callbacks, no parent bookkeeping.
 - Startup handshake: swarm watch sends the `swarm_ready` op
   (`{workspace, terminal_handle}`) so the scheduler can match a pending task.
   `ONLYNE_SWARM_TASK` env and `ORCA_TERMINAL_HANDLE`/`ONLYNE_TERMINAL_HANDLE`
   provide fallback correlation.
-- Tools: `onlyne_swarm_reply({text, rawText?})` writes the out message carrying
-  the task header (the scheduler's success signal) and ends the task slot.
-  `onlyne_mark_no_reply` additionally clears the swarm slot.
+- Tools: `swarm_complete({text})` writes the out message carrying this hop's
+  header (the scheduler's done signal). `swarm_quit({reason?})` exits silently
+  (scheduler records failed). `swarm_send({to, text})` spawns a downstream
+  task with `transfer_send_to` set to the current task and returns the child
+  id without waiting. `swarm_status()` reports the current task and spawned
+  ids. Daemon lifecycle tools stay available in both modes.
+- Generic send/reply tools are not registered in the swarm surface: unheaded
+  or misheaded writes would pollute the protocol. All swarm IO goes through
+  the `swarm_*` tools, whose headers are constructed inside the plugin
+  (`renderSwarmHeader`).
+- Exit guard: at `agent_end` with an unfinished hop, one followUp reminder
+  fires; a second quiet window auto-runs `swarm_quit` (failed ledger row).
 - Body protocol lives in `src/swarm.ts` (`parseSwarmHeader`,
   `renderSwarmHeader`, `readSwarmEnabled`); covered by `test/swarm.test.mjs`.
+  Old `reply_to` headers parse as ordinary (non-swarm) messages.

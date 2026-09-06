@@ -1,6 +1,6 @@
 import { parseSwarmHeader } from "./swarm.js";
 
-export type SwarmHandleResult = "claimed" | "callback" | "busy-ignored" | "not-swarm";
+export type SwarmHandleResult = "claimed" | "not-swarm";
 
 export interface SwarmSlotMessage {
 	text: string;
@@ -19,8 +19,9 @@ export interface SwarmPi {
 export class SwarmSlot {
 	private taskId?: string;
 	private from = ".";
-	private replyTo = "";
+	private transfer = "";
 	private attempt = 1;
+	private sentChildIds: string[] = [];
 
 	handle(pi: SwarmPi, text: string): SwarmHandleResult {
 		const parsed = parseSwarmHeader(text);
@@ -29,30 +30,24 @@ export class SwarmSlot {
 		if (!this.taskId) {
 			this.taskId = header.task_id;
 			this.from = header.from;
-			this.replyTo = header.reply_to;
+			this.transfer = header.transfer_send_to;
 			this.attempt = header.attempt;
+			this.sentChildIds = [];
 			pi.sendUserMessage(
-				`Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nWork this task atomically. Child task callbacks arrive as followUp messages. Finish with onlyne_swarm_reply carrying the reply Markdown, or onlyne_mark_no_reply to end without output.`,
+				`Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`,
 				{ deliverAs: "followUp" },
 			);
 			return "claimed";
 		}
-		if (header.reply_to === this.taskId || header.task_id === this.taskId) {
-			pi.sendUserMessage(
-				`Onlyne swarm callback for ${this.taskId} (from ${header.from}):\n\n${payload}`,
-				{ deliverAs: "followUp" },
-			);
-			return "callback";
-		}
-		pi.sendUserMessage(
-			`[onlyne-internal] swarm task ${header.task_id} ignored: session busy with ${this.taskId}.`,
-			{ deliverAs: "followUp" },
-		);
-		return "busy-ignored";
+		return "not-swarm";
 	}
 
-	task(): { taskId?: string; from: string; replyTo: string; attempt: number } {
-		return { taskId: this.taskId, from: this.from, replyTo: this.replyTo, attempt: this.attempt };
+	task(): { taskId?: string; from: string; transferSendTo: string; attempt: number; sentChildIds: string[] } {
+		return { taskId: this.taskId, from: this.from, transferSendTo: this.transfer, attempt: this.attempt, sentChildIds: [...this.sentChildIds] };
+	}
+
+	noteSpawned(childId: string): void {
+		this.sentChildIds.push(childId);
 	}
 
 	taskIdOf(): string | undefined {
@@ -62,21 +57,26 @@ export class SwarmSlot {
 	clear(): void {
 		this.taskId = undefined;
 		this.from = ".";
-		this.replyTo = "";
+		this.transfer = "";
 		this.attempt = 1;
+		this.sentChildIds = [];
 	}
 }
 
 /** Test seam: fresh slot without touching module-global pi-onlyne state. */
 export function __swarmSlotForTest(): {
 	handle: (pi: SwarmPi, text: string) => SwarmHandleResult;
+	task: () => { taskId?: string; from: string; transferSendTo: string; attempt: number; sentChildIds: string[] };
 	taskId: () => string | undefined;
+	noteSpawned: (childId: string) => void;
 	clear: () => void;
 } {
 	const slot = new SwarmSlot();
 	return {
 		handle: (pi, text) => slot.handle(pi, text),
+		task: () => slot.task(),
 		taskId: () => slot.taskIdOf(),
+		noteSpawned: (childId) => slot.noteSpawned(childId),
 		clear: () => slot.clear(),
 	};
 }

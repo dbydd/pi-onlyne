@@ -122,6 +122,8 @@ The extension merges partial JSON with the defaults. `inbound.rules` accepts cha
 
 ## Agent tools
 
+Normal mode:
+
 ```text
 onlyne_daemon_start()
 onlyne_daemon_stop()
@@ -131,8 +133,23 @@ onlyne_send({ channelId, text, rawText? })
 onlyne_broadcast({ targets, text, rawText? })
 onlyne_loopback({ text, rawText? })
 onlyne_mark_no_reply({ reason? })
-onlyne_swarm_reply({ text, rawText? })
 ```
+
+Swarm mode (`[swarm] enabled`):
+
+```text
+onlyne_daemon_start()
+onlyne_daemon_stop()
+onlyne_daemon_restart()
+swarm_complete({ text })
+swarm_quit({ reason? })
+swarm_send({ to, text })
+swarm_status()
+```
+
+One session sees one toolset, chosen at session start. Generic send/reply
+tools stay out of the swarm surface so unheaded writes cannot pollute the
+protocol.
 
 Messages use Markdown by default. `rawText: true` preserves literal text for scripts and protocol payloads.
 
@@ -173,7 +190,7 @@ Swarm mode lets `onlyne-swarm` own task routing for a generated agent workspace.
 enabled = true
 ```
 
-A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one task atomically, receives child callbacks through `followUp`, and completes with `onlyne_swarm_reply`. `onlyne_mark_no_reply` closes a task without an outbound result.
+A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one hop atomically, spawns continuations with `swarm_send` (fire-and-forget), and exits with `swarm_complete` (done signal) or `swarm_quit` (silent, scheduler records failed). Downstream results travel through files and the ledger; nothing waits.
 
 For automatic startup in a generated workspace, add `.pi/onlyne.json`:
 
