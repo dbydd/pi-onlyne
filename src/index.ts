@@ -4,7 +4,7 @@ import { broadcast, connectDaemon, consumeEvent, loopback, markConsumed, sendWit
 import type { SendTarget } from "./onlyne.js";
 import { inboundModeFor, loadConfig, saveConfig } from "./config.js";
 import { findWorkspace, type Workspace } from "./workspace.js";
-import { envTaskId, parseSwarmHeader, readSwarmEnabled, terminalHandle } from "./swarm.js";
+import { envTaskId, parseSwarmHeader, readSwarmEnabled, readSwarmModel, terminalHandle } from "./swarm.js";
 import { SwarmSlot } from "./swarm-slot.js";
 const swarmSlot = new SwarmSlot();
 
@@ -57,6 +57,23 @@ function scheduleReconnect(pi: ExtensionAPI) {
 	}, 1000);
 }
 
+/** Replay the newest unclaimed swarm task from loopback history. Idempotent. */
+async function catchUpSwarmHistory(pi: ExtensionAPI) {
+	if (swarmSlot.task().taskId) return;
+	try {
+		const { request } = await import("./onlyne.js");
+		if (!state.workspace) return;
+		const res = await request(state.workspace.socketPath, { id: "hist", op: "fetch_channel_history", channel_id: "loopback", limit: 10 } as any);
+		const items = res?.data ?? res ?? [];
+		if (!Array.isArray(items)) return;
+		for (const m of items) {
+			const text = m?.text ?? m?.content ?? "";
+			if (typeof text !== "string" || !text.startsWith("---swarm")) continue;
+			if (handleSwarmInbound(pi, text)) break;
+		}
+	} catch { /* best effort; live events still arrive */ }
+}
+
 /** Swarm-mode inbound path: claim one hop, inject via followUp, never wait. */
 function handleSwarmInbound(pi: ExtensionAPI, text: string, eventSeq?: number) {
 	const parsed = parseSwarmHeader(text);
@@ -93,11 +110,20 @@ async function startWatch(pi: ExtensionAPI) {
 			if (line.type !== "inbound_message") return;
 			const inbound = inboundText(line);
 			if (!inbound || inbound.channelId !== "loopback") return;
+			// Catch up on history first: a fresh watch may subscribe after the
+			// task was already delivered (scheduler writes in before the
+			// session finishes starting). History replay is idempotent via
+			// the slot guard + scheduler task_id dedup.
+			void catchUpSwarmHistory(pi);
 			handleSwarmInbound(pi, inbound.text, line.event_seq);
 		}, () => { if (state.socket === socket) scheduleReconnect(pi); }, { priority: 1 });
 		state.socket = socket; state.watching = true;
 		const task = envTaskId();
 		try { await swarmReady(ws.socketPath, ws.root, terminalHandle()); } catch { /* scheduler may read env fallback */ }
+		// The task may already sit in history (scheduler wrote in before this
+		// session finished starting). Claim it now instead of waiting for a
+		// live event that already fired.
+		await catchUpSwarmHistory(pi);
 		return `swarm watching ${ws.root} (${state.owner})${task ? ` task=${task}` : ""}`;
 	}
 	const socket = subscribe(state.workspace.socketPath, (line) => { if (!line?.event || line.type !== "inbound_message") return; const inbound = inboundText(line); if (!inbound) return; const mode = inboundModeFor(currentConfig(), inbound.channelId, inbound.conversationId); if (mode === "muted") return; if (inbound.channelId === "loopback") { if (mode === "auto-handle") pi.sendUserMessage(`Onlyne loopback activation${inbound.conversationId ? ` (${inbound.conversationId})` : ""}:\n\n${inbound.text}`, { deliverAs: "followUp" }); consumeIfNotified(inbound); return; } if (inbound.text.trim() === "/handshake") { consumeIfNotified(inbound); return; } clearReminder(); state.currentInbound = { ...inbound, replied: false, noReply: false, reminders: 0 }; if (mode === "auto-handle") { pi.sendUserMessage(`Onlyne inbound message from ${inbound.channelId}/${inbound.conversationId}:\n\n${inbound.text}\n\nReply with onlyne_reply, or call onlyne_mark_no_reply if no reply is needed.`, { deliverAs: "followUp" }); consumeIfNotified(inbound); } }, () => { if (state.socket === socket) scheduleReconnect(pi); });
@@ -167,8 +193,29 @@ async function swarmSend(to: string, text: string) {
 	return { childId, to };
 }
 
+/** Swarm mode: apply the workspace snapshot model triple to this session. */
+async function applySwarmModel(pi: ExtensionAPI, ctx: any) {
+	if (!state.swarm || !state.workspace) return;
+	const m = readSwarmModel(state.workspace.onlyneDir);
+	if (!m) return;
+	if (ctx?.model && m.provider && ctx.model.provider === m.provider && m.model && ctx.model.id === m.model && (!m.effort || m.effort === ctx.thinkingLevel)) return;
+	try {
+		if (m.provider && m.model) {
+			const found = ctx.modelRegistry?.find?.(m.provider, m.model);
+			if (found) {
+				const ok = await pi.setModel(found);
+				if (!ok) { ctx.ui?.notify(`swarm model ${m.provider}/${m.model}: no auth`, "warning"); return; }
+			}
+			else ctx.ui?.notify(`swarm model ${m.provider}/${m.model} not in registry; keeping default`, "warning");
+		}
+		const eff = m.effort;
+		if (eff && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(eff)) pi.setThinkingLevel(eff as any);
+		ctx.ui?.setStatus?.("onlyne-model", `model:${m.provider ?? ""}/${m.model ?? ""}${m.effort ? ":" + m.effort : ""}`);
+	} catch (e) { ctx.ui?.notify(`swarm model apply failed: ${e}`, "warning"); }
+}
+
 export default function onlyne(pi: ExtensionAPI) {
-	pi.on("session_start", async (_event, ctx) => { const resumeWatch = state.watching; if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); state.cwd = ctx.cwd; state.workspace = findWorkspace(ctx.cwd); state.currentInbound = undefined; state.lastValidOutput = undefined; state.swarmTask = undefined; swarmSlot.clear(); refreshSwarmFlag(); applyToolSurface(pi); ctx.ui.setStatus("onlyne", state.workspace ? (state.swarm ? "onlyne: swarm" : "onlyne: ready") : "onlyne: no .onlyne"); if ((currentConfig().watch.autoStart || resumeWatch) && state.workspace) { try { ctx.ui.notify(await startWatch(pi), "info"); } catch (e) { ctx.ui.notify(String(e), "warning"); } } });
+	pi.on("session_start", async (_event, ctx) => { const resumeWatch = state.watching; if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); state.cwd = ctx.cwd; state.workspace = findWorkspace(ctx.cwd); state.currentInbound = undefined; state.lastValidOutput = undefined; state.swarmTask = undefined; swarmSlot.clear(); refreshSwarmFlag(); applyToolSurface(pi); void applySwarmModel(pi, ctx); ctx.ui.setStatus("onlyne", state.workspace ? (state.swarm ? "onlyne: swarm" : "onlyne: ready") : "onlyne: no .onlyne"); if ((currentConfig().watch.autoStart || resumeWatch) && state.workspace) { try { ctx.ui.notify(await startWatch(pi), "info"); } catch (e) { ctx.ui.notify(String(e), "warning"); } } });
 	pi.on("session_shutdown", async () => { if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); });
 	for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(sig, () => stopWatch());
 	pi.on("message_end", async (event) => { const text = typeof (event as any).content === "string" ? (event as any).content.trim() : ""; if (text && !text.startsWith("{") && !text.startsWith("[onlyne-internal]")) state.lastValidOutput = text; });

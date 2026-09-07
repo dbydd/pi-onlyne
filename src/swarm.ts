@@ -76,6 +76,48 @@ export function readSwarmEnabled(onlyneDir: string): boolean {
 	return false;
 }
 
+/** Strip // line comments and trailing commas so jsonc parses as JSON. */
+export function stripJsonc(text: string): string {
+	const out: string[] = [];
+	let inStr = false;
+	let esc = false;
+	for (const line of text.split("\n")) {
+		let res = "";
+		for (let i = 0; i < line.length; i++) {
+			const c = line[i];
+			if (inStr) {
+				res += c;
+				if (esc) esc = false;
+				else if (c === "\\") esc = true;
+				else if (c === '"') inStr = false;
+				continue;
+			}
+			if (c === '"') { inStr = true; res += c; continue; }
+			if (c === "/" && line[i + 1] === "/") break;
+			res += c;
+		}
+		out.push(res);
+	}
+	return out.join("\n").replace(/,(\s*[}\]])/g, "$1");
+}
+
+/** Read the model triple from the workspace .onlyne/swarm.workspace.jsonc snapshot. */
+export function readSwarmModel(onlyneDir: string): { provider?: string; model?: string; effort?: string } | null {
+	const path = join(onlyneDir, "swarm.workspace.jsonc");
+	if (!existsSync(path)) return null;
+	try {
+		const parsed = JSON.parse(stripJsonc(readFileSync(path, "utf8")));
+		const m = parsed?.model;
+		if (!m || typeof m !== "object") return null;
+		const provider = typeof m.provider === "string" && m.provider ? m.provider : undefined;
+		const model = typeof m.model === "string" && m.model ? m.model : undefined;
+		const effort = typeof m.effort === "string" && m.effort ? m.effort : undefined;
+		if (!provider && !model) return null;
+		return { provider, model, effort };
+	} catch { /* malformed -> no model override */ }
+	return null;
+}
+
 /** Terminal handle for swarm_ready correlation (injected by the scheduler). */
 export function terminalHandle(): string {
 	return process.env.ORCA_TERMINAL_HANDLE || process.env.ONLYNE_TERMINAL_HANDLE || "";
