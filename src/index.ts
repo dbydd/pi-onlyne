@@ -1,4 +1,7 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { broadcast, connectDaemon, consumeEvent, loopback, markConsumed, sendWithRetry, shutdownDaemon, stopProcess, subscribe, swarmReady } from "./onlyne.js";
 import type { SendTarget } from "./onlyne.js";
@@ -137,7 +140,6 @@ async function reply(text: string) { if (!state.workspace) throw new Error("only
 /** Resolve the current workspace tree path from the workspace root dir name. Root itself is ".". */
 function swarmTreePath(): string {
 	if (!state.workspace) throw new Error("onlyne workspace not found");
-	const { basename } = require("node:path");
 	return state.workspace.root === process.cwd() ? "." : basename(state.workspace.root);
 }
 
@@ -166,10 +168,7 @@ async function swarmSend(to: string, text: string) {
 	if (!state.workspace) throw new Error("onlyne workspace not found");
 	const task = state.swarmTask;
 	if (!task) throw new Error("no active swarm task");
-	const { randomUUID } = await import("node:crypto");
 	const { renderSwarmHeader } = await import("./swarm.js");
-	const { existsSync } = await import("node:fs");
-	const { join, resolve } = await import("node:path");
 	// Resolve the target workspace dir: root "." or a tree path under the swarm tree.
 	// The scheduler owns the tree; here we only verify the send-side symlink exists
 	// (missing target = dangling link = error, never a blind FIFO write).
@@ -183,7 +182,6 @@ async function swarmSend(to: string, text: string) {
 	if (!existsSync(linkPath)) throw new Error(`unknown swarm_send target (missing onlyne_in link): ${to}`);
 	const childId = randomUUID();
 	const wire = renderSwarmHeader({ task_id: childId, from: swarmTreePath(), transfer_send_to: task.taskId, attempt: 1 }, "", text);
-	const { writeFileSync } = await import("node:fs");
 	try {
 		writeFileSync(linkPath, wire);
 	} catch (e) {
@@ -303,8 +301,6 @@ function scheduleSwarmExitReminder(pi: ExtensionAPI, delayMs = 30_000) {
 /** Toggle swarm mode: persists to .onlyne/config.toml [swarm] enabled, restarts watch. */
 async function setSwarm(pi: ExtensionAPI, enabled: boolean) {
 	if (!state.workspace) throw new Error("onlyne workspace not found");
-	const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
-	const { join } = await import("node:path");
 	const cfgPath = join(state.workspace.onlyneDir, "config.toml");
 	let text = existsSync(cfgPath) ? readFileSync(cfgPath, "utf8") : "";
 	if (text.includes("[swarm]")) {
