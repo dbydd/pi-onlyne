@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseSwarmHeader, renderSwarmHeader, readSwarmEnabled } from '../dist/swarm.js';
+import { parseSwarmHeader, renderSwarmHeader, readSwarmEnabled, stripJsonc, readSwarmModel } from '../dist/swarm.js';
 
 test('swarm header roundtrip', () => {
   const id = '550e8400-e29b-41d1-a716-446655440000';
@@ -71,4 +71,20 @@ test('swarm slot: noteSpawned tracks spawned children', async () => {
   assert.equal(t.transferSendTo, '');
   slot.clear();
   assert.equal(slot.taskId(), undefined);
+});
+
+test('stripJsonc drops comments and trailing commas', () => {
+  const src = '{\n  // comment with "quote, and braces }\n  "a": "has // not a comment",\n  "b": [1,2,],\n}';
+  const parsed = JSON.parse(stripJsonc(src));
+  assert.deepEqual(parsed, { a: 'has // not a comment', b: [1, 2] });
+});
+
+test('readSwarmModel parses snapshot triple', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-onlyne-model-'));
+  writeFileSync(join(dir, 'swarm.workspace.jsonc'),
+    '{\n  // model block\n  "name": "scout",\n  "model": { "provider": "axonhub", "model": "supercheap", "effort": "medium", },\n}');
+  assert.deepEqual(readSwarmModel(dir), { provider: 'axonhub', model: 'supercheap', effort: 'medium' });
+  writeFileSync(join(dir, 'swarm.workspace.jsonc'), '{"model": {"provider": "", "model": "", "effort": ""}}');
+  assert.equal(readSwarmModel(dir), null);
+  rmSync(dir, { recursive: true, force: true });
 });
