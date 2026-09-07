@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseSwarmHeader, renderSwarmHeader, readSwarmEnabled, stripJsonc, readSwarmModel } from '../dist/swarm.js';
+import { parseSwarmHeader, renderSwarmHeader, readSwarmEnabled, stripJsonc, readSwarmModel, treePathForWorkspace } from '../dist/swarm.js';
 
 test('swarm header roundtrip', () => {
   const id = '550e8400-e29b-41d1-a716-446655440000';
@@ -87,4 +87,11 @@ test('readSwarmModel parses snapshot triple', () => {
   writeFileSync(join(dir, 'swarm.workspace.jsonc'), '{"model": {"provider": "", "model": "", "effort": ""}}');
   assert.equal(readSwarmModel(dir), null);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test('treePathForWorkspace maps .ws children and root', () => {
+  assert.equal(treePathForWorkspace('/r/.ws/model'), 'model');
+  assert.equal(treePathForWorkspace('/r/.ws/a/b'), 'a/b');
+  assert.equal(treePathForWorkspace('/r'), '.');
+  assert.equal(treePathForWorkspace('/r/.ws'), '.');
 });

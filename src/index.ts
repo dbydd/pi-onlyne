@@ -7,7 +7,7 @@ import { broadcast, connectDaemon, consumeEvent, loopback, markConsumed, sendWit
 import type { SendTarget } from "./onlyne.js";
 import { inboundModeFor, loadConfig, saveConfig } from "./config.js";
 import { findWorkspace, type Workspace } from "./workspace.js";
-import { envTaskId, parseSwarmHeader, readSwarmEnabled, readSwarmModel, terminalHandle } from "./swarm.js";
+import { envTaskId, parseSwarmHeader, readSwarmEnabled, readSwarmModel, terminalHandle, treePathForWorkspace } from "./swarm.js";
 import { SwarmSlot } from "./swarm-slot.js";
 const swarmSlot = new SwarmSlot();
 
@@ -137,10 +137,10 @@ async function startDaemon() { state.workspace = findWorkspace(state.cwd); if (!
 async function stopDaemon() { if (!state.workspace) state.workspace = findWorkspace(state.cwd); if (!state.workspace) throw new Error("current workspace has no .onlyne configuration"); clearReminder(); state.socket?.destroy(); state.socket = undefined; await shutdownDaemon(state.workspace, state.child); state.child = undefined; state.watching = false; state.owner = "stopped"; return `daemon stopped for ${state.workspace.root}`; }
 async function restartDaemon() { await stopDaemon().catch(() => {}); return startDaemon(); }
 async function reply(text: string) { if (!state.workspace) throw new Error("onlyne workspace not found"); const inbound = state.currentInbound; if (!inbound) throw new Error("no active inbound message"); const res = await sendWithRetry(state.workspace.socketPath, { channelId: inbound.channelId }, text, currentConfig().outbound.retry.attempts); if (res.ok) { inbound.replied = true; clearReminder(); } return res; }
-/** Resolve the current workspace tree path from the workspace root dir name. Root itself is ".". */
+/** Resolve the current workspace tree path: segment after /.ws/, root is ".". */
 function swarmTreePath(): string {
 	if (!state.workspace) throw new Error("onlyne workspace not found");
-	return state.workspace.root === process.cwd() ? "." : basename(state.workspace.root);
+	return treePathForWorkspace(state.workspace.root);
 }
 
 /** swarm_complete: hand over. Writes the out message carrying this hop's header (done signal). */

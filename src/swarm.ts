@@ -118,6 +118,15 @@ export function readSwarmModel(onlyneDir: string): { provider?: string; model?: 
 	return null;
 }
 
+/** Tree path of a workspace inside the swarm tree: the segment after the
+ * nearest `/.ws/` marker; the swarm root itself is "." .
+ * Pure function so quoting/edge cases are unit-tested without a live session. */
+export function treePathForWorkspace(workspaceRoot: string): string {
+	const i = workspaceRoot.lastIndexOf("/.ws/");
+	if (i >= 0) return workspaceRoot.slice(i + "/.ws/".length) || ".";
+	return ".";
+}
+
 /** Terminal handle for swarm_ready correlation (injected by the scheduler). */
 export function terminalHandle(): string {
 	return process.env.ORCA_TERMINAL_HANDLE || process.env.ONLYNE_TERMINAL_HANDLE || "";
