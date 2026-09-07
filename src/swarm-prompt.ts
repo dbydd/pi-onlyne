@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { findWorkspace } from "./workspace.js";
 
 export interface SwarmPromptConfig {
 	enabled: boolean;
