@@ -129,3 +129,38 @@ test('treePathForWorkspace maps .ws children and root', () => {
   assert.equal(treePathForWorkspace('/r'), '.');
   assert.equal(treePathForWorkspace('/r/.ws'), '.');
 });
+
+test('swarm prompt: defaults to built-in wrapper with task fields', async () => {
+  const { resolveSwarmPrompt } = await import('../dist/swarm-prompt.js');
+  const dir = mkdtempSync(join(tmpdir(), 'pi-onlyne-prompt-'));
+  try {
+    const out = resolveSwarmPrompt(dir, { task_id: 'id-1', from: 'a', transfer_send_to: '', attempt: 1 }, 'do X');
+    assert.ok(out.includes('id-1'));
+    assert.ok(out.includes('do X'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('swarm prompt: disabled returns null (raw payload path)', async () => {
+  const { resolveSwarmPrompt } = await import('../dist/swarm-prompt.js');
+  const dir = mkdtempSync(join(tmpdir(), 'pi-onlyne-prompt-'));
+  try {
+    mkdirSync(join(dir, '.pi'), { recursive: true });
+    writeFileSync(join(dir, '.pi', 'onlyne.json'), '{"swarm_prompt": false}');
+    assert.equal(resolveSwarmPrompt(dir, { task_id: 'id-1', from: 'a', transfer_send_to: '', attempt: 1 }, 'do X'), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('swarm prompt: template file overrides with placeholders', async () => {
+  const { resolveSwarmPrompt } = await import('../dist/swarm-prompt.js');
+  const dir = mkdtempSync(join(tmpdir(), 'pi-onlyne-prompt-'));
+  try {
+    mkdirSync(join(dir, '.pi'), { recursive: true });
+    mkdirSync(join(dir, 'prompts'), { recursive: true });
+    writeFileSync(join(dir, '.pi', 'onlyne.json'), '{"swarm_prompt": {"template": "prompts/swarm-task.md"}}');
+    writeFileSync(join(dir, 'prompts', 'swarm-task.md'), 'TASK {task_id} FROM {from}:\n{payload}\nDo it, then swarm_complete.');
+    const out = resolveSwarmPrompt(dir, { task_id: 'id-9', from: 'b', transfer_send_to: '', attempt: 2 }, 'relay');
+    assert.ok(out.includes('TASK id-9 FROM b'));
+    assert.ok(out.includes('relay'));
+    assert.ok(!out.includes('Restore context'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

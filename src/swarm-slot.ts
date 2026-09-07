@@ -1,4 +1,5 @@
 import { parseSwarmHeader } from "./swarm.js";
+import { resolveSwarmPrompt } from "./swarm-prompt.js";
 
 export type SwarmHandleResult = "claimed" | "yielded" | "not-swarm";
 
@@ -18,7 +19,7 @@ export class SwarmSlot {
 	private attempt = 1;
 	private sentChildIds: string[] = [];
 
-	handle(pi: SwarmPi, text: string, preferredTaskId?: string): SwarmHandleResult {
+	handle(pi: SwarmPi, text: string, preferredTaskId?: string, workspaceRoot?: string): SwarmHandleResult {
 		const parsed = parseSwarmHeader(text);
 		if (!parsed) return "not-swarm";
 		const { header, payload } = parsed;
@@ -32,7 +33,7 @@ export class SwarmSlot {
 			// active turn, and a fresh session has none. sendMessage with
 			// triggerTurn starts the model turn immediately.
 			pi.sendMessage(
-				{ customType: "onlyne-swarm-task", content: `Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`, display: true },
+				{ customType: "onlyne-swarm-task", content: resolveSwarmPrompt(workspaceRoot ?? process.cwd(), header, payload) ?? payload, display: true },
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 			return "claimed";
@@ -48,7 +49,7 @@ export class SwarmSlot {
 			this.attempt = header.attempt;
 			this.sentChildIds = [];
 			pi.sendMessage(
-				{ customType: "onlyne-swarm-task", content: `Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`, display: true },
+				{ customType: "onlyne-swarm-task", content: resolveSwarmPrompt(workspaceRoot ?? process.cwd(), header, payload) ?? payload, display: true },
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 			return "yielded";
@@ -79,7 +80,7 @@ export class SwarmSlot {
 
 /** Test seam: fresh slot without touching module-global pi-onlyne state. */
 export function __swarmSlotForTest(): {
-	handle: (pi: SwarmPi, text: string, preferredTaskId?: string) => SwarmHandleResult;
+	handle: (pi: SwarmPi, text: string, preferredTaskId?: string, workspaceRoot?: string) => SwarmHandleResult;
 	task: () => { taskId?: string; from: string; transferSendTo: string; attempt: number; sentChildIds: string[] };
 	taskId: () => string | undefined;
 	noteSpawned: (childId: string) => void;
@@ -87,7 +88,7 @@ export function __swarmSlotForTest(): {
 } {
 	const slot = new SwarmSlot();
 	return {
-		handle: (pi, text, preferredTaskId) => slot.handle(pi, text, preferredTaskId),
+		handle: (pi, text, preferredTaskId, workspaceRoot) => slot.handle(pi, text, preferredTaskId, workspaceRoot),
 		task: () => slot.task(),
 		taskId: () => slot.taskIdOf(),
 		noteSpawned: (childId) => slot.noteSpawned(childId),

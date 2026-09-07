@@ -147,7 +147,7 @@ function handleSwarmInbound(pi: ExtensionAPI, text: string, eventSeq?: number, c
 	// Slot transitions live in SwarmSlot (unit-tested); here we only mirror
 	// the claimed task into session state. A claimed session never accepts
 	// another task; downstream work spawns new tasks via swarm_send.
-	const outcome = swarmSlot.handle(pi, text, envTaskId() || undefined);
+	const outcome = swarmSlot.handle(pi, text, envTaskId() || undefined, state.workspace?.root);
 	if (outcome === "claimed" || outcome === "yielded") {
 		const cur = swarmSlot.task();
 		state.swarmTask = { taskId: cur.taskId!, from: cur.from, transferSendTo: cur.transferSendTo, attempt: cur.attempt };
