@@ -32,9 +32,20 @@ Stored in project `.pi/onlyne.json`:
     "defaultReplyMode": "guarded-explicit",
     "guardedExplicit": { "reminders": 2, "noOutputFallbackText": "Onlyne/Pi error: no valid reply was produced." },
     "retry": { "attempts": 2, "concurrency": 8 }
-  }
+  },
+  "swarm_prompt": { "template": "prompts/swarm-task.md" }
 }
 ```
+
+- `swarm_prompt` externalizes the swarm task injection wrapper
+  (`src/swarm-prompt.ts`). `template` is a workspace-relative path whose
+  content is injected as the followUp message; placeholders `{task_id}`,
+  `{from}`, `{transfer_send_to}`, `{attempt}`, `{payload}` are substituted.
+  `false` disables the wrapper (raw payload injected). Omitting the key
+  keeps the built-in default text. Operators with relay-only nodes
+  (no history worth restoring) should ship a template that names the role
+  as the complete instruction set and warns that `onlyne_in/` and
+  `.onlyne/` are OS pipes (opening one freezes the session).
 
 ## Tools
 
