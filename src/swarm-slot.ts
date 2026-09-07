@@ -1,6 +1,6 @@
 import { parseSwarmHeader } from "./swarm.js";
 
-export type SwarmHandleResult = "claimed" | "not-swarm";
+export type SwarmHandleResult = "claimed" | "yielded" | "not-swarm";
 
 export interface SwarmPi {
 	sendMessage: (message: { customType: string; content: string; display: boolean; details?: unknown }, opts: { triggerTurn: true; deliverAs: "followUp" }) => void;
@@ -18,7 +18,7 @@ export class SwarmSlot {
 	private attempt = 1;
 	private sentChildIds: string[] = [];
 
-	handle(pi: SwarmPi, text: string): SwarmHandleResult {
+	handle(pi: SwarmPi, text: string, preferredTaskId?: string): SwarmHandleResult {
 		const parsed = parseSwarmHeader(text);
 		if (!parsed) return "not-swarm";
 		const { header, payload } = parsed;
@@ -36,6 +36,22 @@ export class SwarmSlot {
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 			return "claimed";
+		}
+		// Env-task preemption: the scheduler injected ONLYNE_SWARM_TASK for
+		// this terminal. If the slot holds a stale claim (history catchup
+		// grabbed an already-done task) and the env task arrives, yield the
+		// slot silently — the stale claim never did work, so nothing is lost.
+		if (preferredTaskId && header.task_id === preferredTaskId && this.taskId !== preferredTaskId) {
+			this.taskId = header.task_id;
+			this.from = header.from;
+			this.transfer = header.transfer_send_to;
+			this.attempt = header.attempt;
+			this.sentChildIds = [];
+			pi.sendMessage(
+				{ customType: "onlyne-swarm-task", content: `Onlyne swarm task ${header.task_id} (from ${header.from}):\n\n${payload}\n\nThis session carries this one task only. Restore context from files, work, spawn continuations with swarm_send when another unit must continue, then exit with swarm_complete. Downstream results travel through files and the ledger; nothing waits here.`, display: true },
+				{ triggerTurn: true, deliverAs: "followUp" },
+			);
+			return "yielded";
 		}
 		return "not-swarm";
 	}
@@ -63,7 +79,7 @@ export class SwarmSlot {
 
 /** Test seam: fresh slot without touching module-global pi-onlyne state. */
 export function __swarmSlotForTest(): {
-	handle: (pi: SwarmPi, text: string) => SwarmHandleResult;
+	handle: (pi: SwarmPi, text: string, preferredTaskId?: string) => SwarmHandleResult;
 	task: () => { taskId?: string; from: string; transferSendTo: string; attempt: number; sentChildIds: string[] };
 	taskId: () => string | undefined;
 	noteSpawned: (childId: string) => void;
@@ -71,7 +87,7 @@ export function __swarmSlotForTest(): {
 } {
 	const slot = new SwarmSlot();
 	return {
-		handle: (pi, text) => slot.handle(pi, text),
+		handle: (pi, text, preferredTaskId) => slot.handle(pi, text, preferredTaskId),
 		task: () => slot.task(),
 		taskId: () => slot.taskIdOf(),
 		noteSpawned: (childId) => slot.noteSpawned(childId),

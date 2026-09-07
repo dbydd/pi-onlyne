@@ -25,6 +25,7 @@ interface State {
 	swarmTask?: SwarmTask;
 }
 const state: State = { cwd: process.cwd(), workspace: null, watching: false, owner: "stopped", swarm: false };
+let cachedCtx: any = undefined;
 const textResult = (text: string, details?: unknown) => ({ content: [{ type: "text" as const, text }], details });
 const currentConfig = () => loadConfig(state.cwd);
 function refreshSwarmFlag() { state.swarm = state.workspace ? readSwarmEnabled(state.workspace.onlyneDir) : false; }
@@ -60,37 +61,99 @@ function scheduleReconnect(pi: ExtensionAPI) {
 	}, 1000);
 }
 
-/** Replay the newest unclaimed swarm task from loopback history. Idempotent. */
-async function catchUpSwarmHistory(pi: ExtensionAPI) {
+/** Whether a history task already has an out (done) in this workspace. */
+async function historyTaskDone(taskId: string): Promise<boolean> {
+	try {
+		const { request } = await import("./onlyne.js");
+		if (!state.workspace) return false;
+		const res = await request(state.workspace.socketPath, { id: "hist", op: "fetch_channel_history", channel_id: "loopback", limit: 30 } as any);
+		const items = res?.data ?? res ?? [];
+		if (!Array.isArray(items)) return false;
+		const outs = new Set<string>();
+		for (const m of items) {
+			const text = m?.text ?? "";
+			if (typeof text !== "string" || !text.startsWith("---swarm")) continue;
+			if (m?.direction === "outbound") {
+				const p = parseSwarmHeader(text);
+				if (p) outs.add(p.header.task_id);
+			}
+		}
+		if (outs.has(taskId)) return true;
+		// Stale-claim guard: an inbound older than the newest outbound batch
+		// belongs to a previous hop generation. Only the scheduler-assigned
+		// env task bypasses this check.
+		return false;
+	} catch { return false; }
+}
+
+/** Replay the newest unclaimed swarm task from loopback history. Idempotent.
+ * Prefers the scheduler-assigned env task (ONLYNE_SWARM_TASK); never claims
+ * an already-done task unless it is the env task (env wins, scheduler owns
+ * the truth about what this terminal must run). */
+async function catchUpSwarmHistory(pi: ExtensionAPI, ctx?: any) {
 	if (swarmSlot.task().taskId) return;
 	try {
 		const { request } = await import("./onlyne.js");
 		if (!state.workspace) return;
-		const res = await request(state.workspace.socketPath, { id: "hist", op: "fetch_channel_history", channel_id: "loopback", limit: 10 } as any);
+		const env = envTaskId();
+		const res = await request(state.workspace.socketPath, { id: "hist", op: "fetch_channel_history", channel_id: "loopback", limit: 30 } as any);
 		const items = res?.data ?? res ?? [];
 		if (!Array.isArray(items)) return;
+		const inbounds: string[] = [];
+		const outs = new Set<string>();
 		for (const m of items) {
 			const text = m?.text ?? m?.content ?? "";
 			if (typeof text !== "string" || !text.startsWith("---swarm")) continue;
-			if (handleSwarmInbound(pi, text)) break;
+			const p = parseSwarmHeader(text);
+			if (!p) continue;
+			if (m?.direction === "outbound") outs.add(p.header.task_id);
+			else inbounds.push(text);
+		}
+		// Env task first: exact task_id match on inbound, even if an out exists
+		// (out may belong to a previous generation; scheduler owns the truth).
+		if (env) {
+			for (const text of inbounds) {
+				const p = parseSwarmHeader(text)!;
+				if (p.header.task_id === env) {
+					if (handleSwarmInbound(pi, text, undefined, ctx)) return;
+				}
+			}
+		}
+		// Fallback: newest inbound with no out yet.
+		for (let i = inbounds.length - 1; i >= 0; i--) {
+			const p = parseSwarmHeader(inbounds[i]!)!;
+			if (outs.has(p.header.task_id)) continue;
+			if (p.header.task_id === env) continue; // already tried above
+			if (handleSwarmInbound(pi, inbounds[i]!)) return;
 		}
 	} catch { /* best effort; live events still arrive */ }
 }
 
+/** Pin the tab title for a claimed hop. Pi rewrites the create-time title on
+ * boot and on idle transitions, and the scheduler-side rename races those
+ * writes. Last writer wins, so the session re-asserts its own title on claim
+ * and again on agent_end (idle), which is pi's other rewrite point. */
+function pinSwarmTitle(ctx: any, taskId: string) {
+	try {
+		ctx?.ui?.setTitle?.(`swarm:${swarmTreePath()}:${taskId.slice(0, 8)}`);
+	} catch { /* title is cosmetic */ }
+}
+
 /** Swarm-mode inbound path: claim one hop, inject via followUp, never wait. */
-function handleSwarmInbound(pi: ExtensionAPI, text: string, eventSeq?: number) {
+function handleSwarmInbound(pi: ExtensionAPI, text: string, eventSeq?: number, ctx?: any) {
 	const parsed = parseSwarmHeader(text);
 	if (!parsed) return false;
 	if (state.socket && eventSeq !== undefined) void consumeEvent(state.socket, eventSeq).catch(() => {});
 	// Slot transitions live in SwarmSlot (unit-tested); here we only mirror
 	// the claimed task into session state. A claimed session never accepts
 	// another task; downstream work spawns new tasks via swarm_send.
-	const outcome = swarmSlot.handle(pi, text);
-	if (outcome === "claimed") {
+	const outcome = swarmSlot.handle(pi, text, envTaskId() || undefined);
+	if (outcome === "claimed" || outcome === "yielded") {
 		const cur = swarmSlot.task();
 		state.swarmTask = { taskId: cur.taskId!, from: cur.from, transferSendTo: cur.transferSendTo, attempt: cur.attempt };
+		if (ctx) void pinSwarmTitle(ctx, cur.taskId!);
 	}
-	return outcome === "claimed";
+	return outcome === "claimed" || outcome === "yielded";
 }
 
 async function startWatch(pi: ExtensionAPI) {
@@ -213,12 +276,12 @@ async function applySwarmModel(pi: ExtensionAPI, ctx: any) {
 }
 
 export default function onlyne(pi: ExtensionAPI) {
-	pi.on("session_start", async (_event, ctx) => { const resumeWatch = state.watching; if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); state.cwd = ctx.cwd; state.workspace = findWorkspace(ctx.cwd); state.currentInbound = undefined; state.lastValidOutput = undefined; state.swarmTask = undefined; swarmSlot.clear(); refreshSwarmFlag(); applyToolSurface(pi); void applySwarmModel(pi, ctx); ctx.ui.setStatus("onlyne", state.workspace ? (state.swarm ? "onlyne: swarm" : "onlyne: ready") : "onlyne: no .onlyne"); if ((currentConfig().watch.autoStart || resumeWatch) && state.workspace) { try { ctx.ui.notify(await startWatch(pi), "info"); } catch (e) { ctx.ui.notify(String(e), "warning"); } } });
+	pi.on("session_start", async (_event, ctx) => { cachedCtx = ctx; const resumeWatch = state.watching; if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); state.cwd = ctx.cwd; state.workspace = findWorkspace(ctx.cwd); state.currentInbound = undefined; state.lastValidOutput = undefined; state.swarmTask = undefined; swarmSlot.clear(); refreshSwarmFlag(); applyToolSurface(pi); void applySwarmModel(pi, ctx); ctx.ui.setStatus("onlyne", state.workspace ? (state.swarm ? "onlyne: swarm" : "onlyne: ready") : "onlyne: no .onlyne"); if ((currentConfig().watch.autoStart || resumeWatch) && state.workspace) { try { ctx.ui.notify(await startWatch(pi), "info"); } catch (e) { ctx.ui.notify(String(e), "warning"); } } });
 	pi.on("session_shutdown", async () => { if (state.owner === "extension") await stopDaemon().catch(() => {}); else stopWatch(); });
 	for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(sig, () => stopWatch());
 	pi.on("message_end", async (event) => { const text = typeof (event as any).content === "string" ? (event as any).content.trim() : ""; if (text && !text.startsWith("{") && !text.startsWith("[onlyne-internal]")) state.lastValidOutput = text; });
 	pi.on("agent_start", async () => clearReminder());
-	pi.on("agent_end", async () => { if (state.swarm) scheduleSwarmExitReminder(pi); else scheduleReminder(pi); });
+	pi.on("agent_end", async () => { if (state.swarm) { const cur = swarmSlot.task(); if (cur.taskId && cachedCtx) void pinSwarmTitle(cachedCtx, cur.taskId); scheduleSwarmExitReminder(pi); } else scheduleReminder(pi); });
 	pi.registerCommand("onlyne", {
 		description: "Onlyne watch/status/config commands",
 		getArgumentCompletions: (prefix: string) => {

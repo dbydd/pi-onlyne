@@ -38,6 +38,20 @@ test('swarm flag reads [swarm] enabled', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('swarm slot: consecutive hops on one workspace claim in order', async () => {
+  // Regression for 875dff0d: second hop's session must claim ITS env task,
+  // never the previous hop's done task, even when history lists old first.
+  const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
+  const pi = { sendMessage: () => {} };
+  const slot = __swarmSlotForTest();
+  const hop1 = '11111111-2222-4333-8444-555555555555';
+  const hop2 = '22222222-3333-4444-8555-666666666666';
+  const t2 = `---swarm\ntask_id: ${hop2}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nhop2\n`;
+  // catchUp scans inbounds; env match wins over newest-first fallback.
+  assert.equal(slot.handle(pi, t2, hop2), 'claimed');
+  assert.equal(slot.taskId(), hop2);
+});
+
 test('swarm slot: first task claims, second task ignored, clear resets', async () => {
   const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
   const seen = [];
@@ -56,6 +70,26 @@ test('swarm slot: first task claims, second task ignored, clear resets', async (
   assert.match(seen[0].text, /Onlyne swarm task/);
   slot.clear();
   assert.equal(slot.taskId(), undefined);
+});
+
+test('swarm slot: env task preempts stale history claim', async () => {
+  const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
+  const seen = [];
+  const pi = { sendMessage: (msg, opts) => { seen.push({ text: msg.content, deliverAs: opts?.deliverAs, triggerTurn: opts?.triggerTurn }); } };
+  const slot = __swarmSlotForTest();
+  const oldId = 'aaaaaaaa-2222-4333-8444-555555555555';
+  const envId = 'bbbbbbbb-3333-4444-8555-666666666666';
+  const stale = `---swarm\ntask_id: ${oldId}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nstale\n`;
+  const envTask = `---swarm\ntask_id: ${envId}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nreal\n`;
+  assert.equal(slot.handle(pi, stale), 'claimed');
+  assert.equal(slot.taskId(), oldId);
+  // Env task arrives late: yields the stale claim, injects the real task.
+  assert.equal(slot.handle(pi, envTask, envId), 'yielded');
+  assert.equal(slot.taskId(), envId);
+  assert.equal(seen.length, 2);
+  // Third task while claimed: ignored.
+  const other = `---swarm\ntask_id: cccccccc-4444-4555-8666-777777777777\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nother\n`;
+  assert.equal(slot.handle(pi, other, envId), 'not-swarm');
 });
 
 test('swarm slot: noteSpawned tracks spawned children', async () => {
