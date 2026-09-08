@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
-import { broadcast, connectDaemon, consumeEvent, loopback, markConsumed, sendWithRetry, shutdownDaemon, stopProcess, subscribe, swarmReady } from "./onlyne.js";
+import { broadcast, connectDaemon, consumeEvent, loopback, markConsumed, sendWithRetry, shutdownDaemon, stopProcess, subscribe, swarmReady, swarmRecycled } from "./onlyne.js";
 import type { SendTarget } from "./onlyne.js";
 import { inboundModeFor, loadConfig, saveConfig } from "./config.js";
 import { findWorkspace, type Workspace } from "./workspace.js";
-import { envTaskId, parseSwarmHeader, readSwarmEnabled, readSwarmModel, terminalHandle, treePathForWorkspace } from "./swarm.js";
+import { envTaskId, parseSwarmCtl, parseSwarmHeader, readSwarmEnabled, readSwarmModel, terminalHandle, treePathForWorkspace } from "./swarm.js";
 import { SwarmSlot } from "./swarm-slot.js";
 const swarmSlot = new SwarmSlot();
 
@@ -73,6 +73,7 @@ async function historyTaskDone(taskId: string): Promise<boolean> {
 		for (const m of items) {
 			const text = m?.text ?? "";
 			if (typeof text !== "string" || !text.startsWith("---swarm")) continue;
+			if (text.startsWith("---swarm-ctl")) continue;
 			if (m?.direction === "outbound") {
 				const p = parseSwarmHeader(text);
 				if (p) outs.add(p.header.task_id);
@@ -104,6 +105,7 @@ async function catchUpSwarmHistory(pi: ExtensionAPI, ctx?: any) {
 		for (const m of items) {
 			const text = m?.text ?? m?.content ?? "";
 			if (typeof text !== "string" || !text.startsWith("---swarm")) continue;
+			if (text.startsWith("---swarm-ctl")) continue;
 			const p = parseSwarmHeader(text);
 			if (!p) continue;
 			if (m?.direction === "outbound") outs.add(p.header.task_id);
@@ -180,6 +182,11 @@ async function startWatch(pi: ExtensionAPI) {
 			// task was already delivered (scheduler writes in before the
 			// session finishes starting). History replay is idempotent via
 			// the slot guard + scheduler task_id dedup.
+			if (parseSwarmCtl(inbound.text)) {
+				const ctl = parseSwarmCtl(inbound.text)!;
+				void handleSwarmRecycle(ctl.task_id, ctl.reason);
+				return;
+			}
 			void catchUpSwarmHistory(pi);
 			handleSwarmInbound(pi, inbound.text, line.event_seq);
 		}, () => { if (state.socket === socket) scheduleReconnect(pi); }, { priority: 1 });
@@ -218,12 +225,46 @@ async function swarmComplete(text: string) {
 	return { ...res, taskId: task.taskId };
 }
 
-/** swarm_quit: silent exit. No out written; the scheduler records failed. */
+/** swarm_quit: speak, then die by our own hand. Sends the exit notice
+ * (same op the recycle path uses, reason quit:<reason>) so the scheduler
+ * records failed immediately instead of leaving the task pinned running;
+ * then releases the watch and exits this process. The scheduler only ever
+ * closes the tab. */
 async function swarmQuit(reason?: string) {
 	const task = state.swarmTask;
+	const taskId = task?.taskId ?? "";
+	const why = `quit:${reason ?? ""}`;
+	try {
+		if (state.workspace && taskId) {
+			await swarmRecycled(state.workspace.socketPath, taskId, terminalHandle(), why);
+		}
+	} catch { /* daemon may be gone; exit anyway */ }
+	clearReminder();
+	try { stopWatch(); } catch { /* already stopped */ }
 	state.swarmTask = undefined;
 	swarmSlot.clear();
-	return { quit: true, taskId: task?.taskId, reason: reason ?? "" };
+	setTimeout(() => process.exit(0), 300);
+	return { quit: true, taskId, reason: reason ?? "" };
+}
+
+/** Handle a downlink recycle signal: accept, ack, release, self-terminate.
+ * No out is written (the scheduler already recorded the terminal state). */
+async function handleSwarmRecycle(ctlTaskId: string, reason: string) {
+	const claimed = swarmSlot.task().taskId;
+	const taskId = ctlTaskId === "*" ? (claimed ?? "") : ctlTaskId;
+	if (claimed && ctlTaskId !== "*" && claimed !== ctlTaskId) return false;
+	const why = `recycle:${reason}`;
+	try {
+		if (state.workspace && taskId) {
+			await swarmRecycled(state.workspace.socketPath, taskId, terminalHandle(), why);
+		}
+	} catch { /* daemon may be gone; exit anyway */ }
+	clearReminder();
+	try { stopWatch(); } catch { /* already stopped */ }
+	state.swarmTask = undefined;
+	swarmSlot.clear();
+	setTimeout(() => process.exit(0), 300);
+	return true;
 }
 
 /** swarm_send: spawn downstream. New UUID, transfer_send_to = current task, fire-and-forget. */

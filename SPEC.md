@@ -93,17 +93,19 @@ One session sees one toolset. The surface is chosen at `session_start` from
   `ONLYNE_SWARM_TASK` env and `ORCA_TERMINAL_HANDLE`/`ONLYNE_TERMINAL_HANDLE`
   provide fallback correlation.
 - Tools: `swarm_complete({text})` writes the out message carrying this hop's
-  header (the scheduler's done signal). `swarm_quit({reason?})` exits silently
-  (scheduler records failed). `swarm_send({to, text})` spawns a downstream
-  task with `transfer_send_to` set to the current task and returns the child
-  id without waiting. `swarm_status()` reports the current task and spawned
-  ids. Daemon lifecycle tools stay available in both modes.
+  header (the scheduler's done signal). Scheduler sends a `---swarm-ctl`
+  recycle wire; pi-onlyne intercepts it, sends `swarm_recycled`, stops the
+  watch, clears the slot, and exits its own process. `swarm_quit({reason?})`
+  sends `swarm_recycled` with `quit:<reason>` then self-exits; scheduler marks
+  the hop failed with no retry. The second empty-exit guard runs this same path.
+- `swarm_send({to, text})` spawns a downstream task with
+  `transfer_send_to` set to the current task and returns the child id without
+  waiting. `swarm_status()` reports the current task and spawned ids. Daemon
+  lifecycle tools stay available in both modes.
 - Generic send/reply tools are not registered in the swarm surface: unheaded
   or misheaded writes would pollute the protocol. All swarm IO goes through
   the `swarm_*` tools, whose headers are constructed inside the plugin
   (`renderSwarmHeader`).
-- Exit guard: at `agent_end` with an unfinished hop, one followUp reminder
-  fires; a second quiet window auto-runs `swarm_quit` (failed ledger row).
 - Body protocol lives in `src/swarm.ts` (`parseSwarmHeader`,
   `renderSwarmHeader`, `readSwarmEnabled`); covered by `test/swarm.test.mjs`.
   Old `reply_to` headers parse as ordinary (non-swarm) messages.

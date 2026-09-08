@@ -64,6 +64,9 @@ export function stopProcess(child?: ChildProcess) { if (!child || child.killed) 
 export async function swarmReady(socketPath: string, workspace: string, terminalHandle: string): Promise<any> {
 	return request(socketPath, { id: `swarm-ready-${Date.now()}`, op: "swarm_ready", text: JSON.stringify({ workspace, terminal_handle: terminalHandle }) } as any);
 }
+export async function swarmRecycled(socketPath: string, taskId: string, terminalHandle: string, reason: string): Promise<any> {
+	return request(socketPath, { id: `swarm-recycled-${Date.now()}`, op: "swarm_recycled", text: JSON.stringify({ task_id: taskId, terminal_handle: terminalHandle, reason }) } as any);
+}
 export async function consumeEvent(socket: Socket, eventSeq: number): Promise<void> {
 	return new Promise((resolve) => { try { socket.write(`${JSON.stringify({ id: `consume-${Date.now()}`, op: "consume", event_seq: eventSeq })}\n`, () => resolve()); } catch { resolve(); } });
 }

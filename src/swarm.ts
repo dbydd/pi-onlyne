@@ -49,6 +49,33 @@ export function parseSwarmHeader(text: string): SwarmMessage | null {
 	return { header: { task_id: task_id.trim(), from, transfer_send_to, attempt }, payload };
 }
 
+/** Downlink control wire (scheduler -> session). Header-only marker the
+ * session intercepts before the model sees anything. `task_id` is "*" for
+ * "whatever this session holds". */
+export interface SwarmCtl { op: string; task_id: string; reason: string }
+export function parseSwarmCtl(text: string): SwarmCtl | null {
+	if (!text.startsWith("---swarm-ctl\n")) return null;
+	const rest = text.slice("---swarm-ctl\n".length);
+	const end = rest.indexOf("\n---");
+	if (end < 0) return null;
+	let op: string | undefined;
+	let task_id = "*";
+	let reason = "";
+	for (const line of rest.slice(0, end).split("\n")) {
+		const t = line.trim();
+		if (!t || t.startsWith("#")) continue;
+		const i = t.indexOf(":");
+		if (i < 0) continue;
+		const k = t.slice(0, i).trim();
+		const v = t.slice(i + 1).trim().replace(/^["']|["']$/g, "");
+		if (k === "op") op = v;
+		else if (k === "task_id") task_id = v || "*";
+		else if (k === "reason") reason = v;
+	}
+	if (op !== "recycle") return null;
+	return { op, task_id, reason };
+}
+
 /** Render a swarm body header in front of a Markdown payload. */
 export function renderSwarmHeader(header: SwarmHeader, role: string, payloadMarkdown: string): string {
 	let s = `---swarm\ntask_id: ${header.task_id}\nfrom: ${header.from}\ntransfer_send_to: ${header.transfer_send_to}\nattempt: ${header.attempt}\n---\n`;

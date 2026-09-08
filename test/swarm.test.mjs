@@ -164,3 +164,17 @@ test('swarm prompt: template file overrides with placeholders', async () => {
     assert.ok(!out.includes('Restore context'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('swarm ctl: recycle wire parses, task parser rejects it', async () => {
+  const { parseSwarmCtl } = await import('../dist/swarm.js');
+  const { parseSwarmHeader } = await import('../dist/swarm.js');
+  const wire = '---swarm-ctl\nop: recycle\ntask_id: abc\nreason: cancel\n---\n';
+  const ctl = parseSwarmCtl(wire);
+  assert.ok(ctl);
+  assert.equal(ctl.op, 'recycle');
+  assert.equal(ctl.task_id, 'abc');
+  assert.equal(ctl.reason, 'cancel');
+  assert.equal(parseSwarmHeader(wire), null);
+  assert.equal(parseSwarmCtl('---swarm\ntask_id: x\n---\n'), null);
+  assert.equal(parseSwarmCtl('---swarm-ctl\nop: nope\ntask_id: x\n---\n'), null);
+});

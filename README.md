@@ -151,6 +151,12 @@ One session sees one toolset, chosen at session start. Generic send/reply
 tools stay out of the swarm surface so unheaded writes cannot pollute the
 protocol.
 
+Reclaim uses a control wire on the same loopback path: the scheduler writes a
+header-only `---swarm-ctl` message (`op: recycle`), pi-onlyne intercepts it
+before delivery, acks `swarm_recycled { task_id, reason }`, stops watching,
+clears the slot, and exits its own process. The scheduler then closes the
+Orca tab. Missing acks are logged and the tab still closes.
+
 Messages use Markdown by default. `rawText: true` preserves literal text for scripts and protocol payloads.
 
 ### Send one message
@@ -190,7 +196,7 @@ Swarm mode lets `onlyne-swarm` own task routing for a generated agent workspace.
 enabled = true
 ```
 
-A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one hop atomically, spawns continuations with `swarm_send` (fire-and-forget), and exits with `swarm_complete` (done signal) or `swarm_quit` (silent, scheduler records failed). Downstream results travel through files and the ledger; nothing waits.
+A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one hop atomically, spawns continuations with `swarm_send` (fire-and-forget), and writes `swarm_complete` (done signal). Scheduler then sends a header-only recycle control wire; pi-onlyne intercepts it before model delivery, sends `swarm_recycled`, stops the watch, clears the slot, and self-exits. `swarm_quit` sends the same ack with `quit:<reason>` then self-exits, so the scheduler records failed immediately. Downstream results travel through files and the ledger; nothing waits.
 
 For automatic startup in a generated workspace, add `.pi/onlyne.json`:
 
@@ -212,7 +218,9 @@ Pi-side settings live at `.pi/onlyne.json`. Onlyne stores credentials, history, 
 
 ## Release notes
 
-This checkout is version 0.6.0 with swarm support already merged into the `dev` branch. npm currently publishes 0.4.0 as the latest tag. Run `npm run check` before any release so the build and tests regenerate `dist/`. Publish with `npm publish` after reviewing the generated tarball.
+The checkout in this repository tracks the published version in `package.json`.
+Run `npm run check` before any release so the build and tests regenerate
+`dist/`. Publish with `npm publish` after reviewing the generated tarball.
 
 ## Development
 
