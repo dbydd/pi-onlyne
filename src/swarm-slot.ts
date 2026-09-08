@@ -23,11 +23,13 @@ export class SwarmSlot {
 		const parsed = parseSwarmHeader(text);
 		if (!parsed) return "not-swarm";
 		const { header, payload } = parsed;
-		// A raw swarm_send wire establishes the scheduler task row. The target
-		// pi claims only the scheduler-delivered copy, which carries this role
-		// section. This prevents cold-start history replay from claiming the raw
-		// baton before the scheduler has injected target-local instructions.
-		if (!payload.startsWith("## role:")) return "not-swarm";
+		// A scheduler-delivered wire is authoritative only when it opens with
+		// the wire contract: a flat role block of numbered steps, then the
+		// baton line. Raw relay wires (baton only, no role block) establish
+		// the scheduler task row and are never claimed directly — the scheduler
+		// delivers the target's role on dispatch. This prevents cold-start
+		// history replay from claiming a raw baton first.
+		if (!/^\d+\. /.test(payload)) return "not-swarm";
 		if (!this.taskId) {
 			this.taskId = header.task_id;
 			this.from = header.from;

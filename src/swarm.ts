@@ -79,7 +79,10 @@ export function parseSwarmCtl(text: string): SwarmCtl | null {
 /** Render a swarm body header in front of a Markdown payload. */
 export function renderSwarmHeader(header: SwarmHeader, role: string, payloadMarkdown: string): string {
 	let s = `---swarm\ntask_id: ${header.task_id}\nfrom: ${header.from}\ntransfer_send_to: ${header.transfer_send_to}\nattempt: ${header.attempt}\n---\n`;
-	if (role) s += `## role: ${role}\n\n${role}\n`;
+	// Flat role block: plain numbered steps with no duplicate echo.
+	if (role) {
+		s += role.endsWith("\n") ? role + "\n" : role + "\n\n";
+	}
 	s += payloadMarkdown;
 	if (!s.endsWith("\n")) s += "\n";
 	return s;
