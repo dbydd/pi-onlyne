@@ -84,10 +84,12 @@ One session sees one toolset. The surface is chosen at `session_start` from
 - When swarm is on, generic in/out auto-handling is disabled: the scheduler owns
   input/output. Only loopback messages carrying a `---swarm` body header enter
   the session, via the `followUp` task queue.
-- Session model: one session carries exactly one hop, no exceptions. A new
-  header claims the slot; any further header while claimed is ignored
-  (the scheduler always opens a new session, so this guard never fires
-  on the normal path). No waiting, no callbacks, no parent bookkeeping.
+- Session model: one session carries exactly one scheduler-delivered hop. A
+  `delivery: scheduler` header field claims the slot; raw `swarm_send` relay
+  wires and out wires omit it and never claim. Any further delivered header
+  while claimed is ignored (the scheduler always opens a new session, so this
+  guard never fires on the normal path). No waiting, no callbacks, no parent
+  bookkeeping.
 - Startup handshake: swarm watch sends the `swarm_ready` op
   (`{workspace, terminal_handle}`) so the scheduler can match a pending task.
   `ONLYNE_SWARM_TASK` env and `ORCA_TERMINAL_HANDLE`/`ONLYNE_TERMINAL_HANDLE`

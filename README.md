@@ -189,14 +189,14 @@ The extension also supports `.onlyne/channels/loopback/in` when FIFO IO is enabl
 
 ## Swarm mode
 
-Swarm mode lets `onlyne-swarm` own task routing for a generated agent workspace. Enable it in `.onlyne/config.toml`:
+Swarm mode lets `onlyne-swarm >= 0.5.0` own task routing for a generated agent workspace. `pi-onlyne 0.8.1` uses the scheduler's `delivery: scheduler` header for task claims, so these versions upgrade together. Enable it in `.onlyne/config.toml`:
 
 ```toml
 [swarm]
 enabled = true
 ```
 
-A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one hop atomically, spawns continuations with `swarm_send` (fire-and-forget), and writes `swarm_complete` (done signal). Scheduler then sends a header-only recycle control wire; pi-onlyne intercepts it before model delivery, sends `swarm_recycled`, stops the watch, clears the slot, and self-exits. `swarm_quit` sends the same ack with `quit:<reason>` then self-exits, so the scheduler records failed immediately. Downstream results travel through files and the ledger; nothing waits.
+A swarm Pi session subscribes to loopback events, reports `swarm_ready`, accepts one scheduler-delivered hop atomically, spawns continuations with `swarm_send` (fire-and-forget), and writes `swarm_complete` (done signal). A raw `swarm_send` relay carries no `delivery` header and only creates the scheduler task row; the scheduler's second delivery adds `delivery: scheduler`, which pi-onlyne uses as the claim gate. This keeps arbitrary role prose out of transport authentication. Scheduler then sends a header-only recycle control wire; pi-onlyne intercepts it before model delivery, sends `swarm_recycled`, stops the watch, clears the slot, and self-exits. `swarm_quit` sends the same ack with `quit:<reason>` then self-exits, so the scheduler records failed immediately. Downstream results travel through files and the ledger; nothing waits.
 
 For automatic startup in a generated workspace, add `.pi/onlyne.json`:
 
