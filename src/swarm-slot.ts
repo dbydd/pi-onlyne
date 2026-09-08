@@ -22,14 +22,11 @@ export class SwarmSlot {
 	handle(pi: SwarmPi, text: string, preferredTaskId?: string, workspaceRoot?: string): SwarmHandleResult {
 		const parsed = parseSwarmHeader(text);
 		if (!parsed) return "not-swarm";
-		const { header, payload } = parsed;
-		// A scheduler-delivered wire is authoritative only when it opens with
-		// the wire contract: a flat role block of numbered steps, then the
-		// baton line. Raw relay wires (baton only, no role block) establish
-		// the scheduler task row and are never claimed directly — the scheduler
-		// delivers the target's role on dispatch. This prevents cold-start
-		// history replay from claiming a raw baton first.
-		if (!/^\d+\. /.test(payload)) return "not-swarm";
+		const { header, delivery, payload } = parsed;
+		// Only the scheduler's second delivery is claimable. A worker's raw
+		// swarm_send relay and every out wire omit this structured field, so
+		// history catchup cannot claim either one as an executable task.
+		if (delivery !== "scheduler") return "not-swarm";
 		if (!this.taskId) {
 			this.taskId = header.task_id;
 			this.from = header.from;
@@ -84,7 +81,6 @@ export class SwarmSlot {
 		this.sentChildIds = [];
 	}
 }
-
 
 /** Test seam: fresh slot without touching module-global pi-onlyne state. */
 export function __swarmSlotForTest(): {

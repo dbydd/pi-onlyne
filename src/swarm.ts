@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 /** Swarm header carried in the message body (upper-layer protocol, see PROTOCOL.md). */
 export interface SwarmHeader { task_id: string; from: string; transfer_send_to: string; attempt: number }
-export interface SwarmMessage { header: SwarmHeader; payload: string }
+/** `scheduler` identifies the scheduler's second delivery. Raw relay and out
+ * wires omit it, so a cold-start history scan cannot claim them. */
+export interface SwarmMessage { header: SwarmHeader; delivery: string; payload: string }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -30,6 +32,7 @@ export function parseSwarmHeader(text: string): SwarmMessage | null {
 	let from = ".";
 	let transfer_send_to = "";
 	let attempt = 1;
+	let delivery = "";
 	let sawTransfer = false;
 	for (const line of headRaw.split("\n")) {
 		const t = line.trim();
@@ -43,10 +46,11 @@ export function parseSwarmHeader(text: string): SwarmMessage | null {
 		else if (k === "transfer_send_to") { transfer_send_to = v; sawTransfer = true; }
 		else if (k === "reply_to") return null;
 		else if (k === "attempt") attempt = Number.parseInt(v, 10) || 1;
+		else if (k === "delivery") delivery = v;
 	}
 	if (!sawTransfer) return null;
 	if (!task_id || !UUID_RE.test(task_id.trim())) return null;
-	return { header: { task_id: task_id.trim(), from, transfer_send_to, attempt }, payload };
+	return { header: { task_id: task_id.trim(), from, transfer_send_to, attempt }, delivery, payload };
 }
 
 /** Downlink control wire (scheduler -> session). Header-only marker the
@@ -78,8 +82,10 @@ export function parseSwarmCtl(text: string): SwarmCtl | null {
 
 /** Render a swarm body header in front of a Markdown payload. */
 export function renderSwarmHeader(header: SwarmHeader, role: string, payloadMarkdown: string): string {
+	// Raw relay and out wires intentionally omit `delivery`. Scheduler owns the
+	// second delivery step and adds `delivery: scheduler` there.
 	let s = `---swarm\ntask_id: ${header.task_id}\nfrom: ${header.from}\ntransfer_send_to: ${header.transfer_send_to}\nattempt: ${header.attempt}\n---\n`;
-	// Flat role block: plain numbered steps with no duplicate echo.
+	// Flat role text follows the delimiter once, with no duplicate echo.
 	if (role) {
 		s += role.endsWith("\n") ? role + "\n" : role + "\n\n";
 	}

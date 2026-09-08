@@ -5,15 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseSwarmHeader, renderSwarmHeader, readSwarmEnabled, stripJsonc, readSwarmModel, treePathForWorkspace } from '../dist/swarm.js';
 
+function schedulerWire(taskId, payload, from = '.', transfer = '', attempt = 1) {
+  return `---swarm\ntask_id: ${taskId}\nfrom: ${from}\ntransfer_send_to: ${transfer}\nattempt: ${attempt}\ndelivery: scheduler\n---\n${payload}\n`;
+}
+
 test('swarm header roundtrip', () => {
   const id = '550e8400-e29b-41d1-a716-446655440000';
-  const wire = renderSwarmHeader({ task_id: id, from: 'planner', transfer_send_to: '', attempt: 1 }, '', 'do X\n');
+  const wire = renderSwarmHeader({ task_id: id, from: 'planner', transfer_send_to: '', attempt: 1 }, 'Review the incoming task and return a concise result.', 'do X\n');
   const m = parseSwarmHeader(wire);
   assert.ok(m);
   assert.equal(m.header.task_id, id);
   assert.equal(m.header.from, 'planner');
   assert.equal(m.header.transfer_send_to, '');
-  assert.ok(m.payload.includes('do X'));
+  assert.equal(m.delivery, '');
+  assert.equal(m.payload, 'Review the incoming task and return a concise result.\n\ndo X\n');
 });
 
 test('non-swarm body is null', () => {
@@ -46,28 +51,31 @@ test('swarm slot: consecutive hops on one workspace claim in order', async () =>
   const slot = __swarmSlotForTest();
   const hop1 = '11111111-2222-4333-8444-555555555555';
   const hop2 = '22222222-3333-4444-8555-666666666666';
-  const t2 = `---swarm\ntask_id: ${hop2}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nhop2\n`;
+  const t2 = schedulerWire(hop2, 'Review this task, then complete it.');
   // catchUp scans inbounds; env match wins over newest-first fallback.
   assert.equal(slot.handle(pi, t2, hop2), 'claimed');
   assert.equal(slot.taskId(), hop2);
 });
 
-test('swarm slot: first task claims, second task ignored, clear resets', async () => {
+test('swarm slot: raw relay is rejected and scheduler delivery claims prose role', async () => {
   const { __swarmSlotForTest } = await import('../dist/swarm-slot.js');
   const seen = [];
   const pi = { sendMessage: (msg, opts) => { seen.push({ text: msg.content, deliverAs: opts?.deliverAs, triggerTurn: opts?.triggerTurn }); } };
   const slot = __swarmSlotForTest();
   const idA = '11111111-2222-4333-8444-555555555555';
-  const taskA = `---swarm\ntask_id: ${idA}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\ndo A\n`;
-  const taskB = `---swarm\ntask_id: 22222222-3333-4444-8555-666666666666\nfrom: a\ntransfer_send_to: ${idA}\nattempt: 1\n---\nchild done\n`;
+  const rawRelay = `---swarm\ntask_id: ${idA}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nROUND 7\n`;
+  const taskA = schedulerWire(idA, 'Review the incoming task and return a concise result.');
+  assert.equal(slot.handle(pi, rawRelay), 'not-swarm');
+  assert.equal(slot.taskId(), undefined);
   assert.equal(slot.handle(pi, taskA), 'claimed');
   assert.equal(slot.taskId(), idA);
-  // No waiting, no callbacks: a claimed session never accepts another task.
+  assert.match(seen[0].text, /Review the incoming task/);
+  // A claimed session never accepts another delivery.
+  const taskB = schedulerWire('22222222-3333-4444-8555-666666666666', 'A child delivery.', 'a', idA);
   assert.equal(slot.handle(pi, taskB), 'not-swarm');
   assert.equal(slot.handle(pi, 'plain hello'), 'not-swarm');
   assert.ok(seen.every((m) => m.deliverAs === 'followUp'));
   assert.ok(seen.every((m) => m.triggerTurn === true), 'cold start needs triggerTurn');
-  assert.match(seen[0].text, /Onlyne swarm task/);
   slot.clear();
   assert.equal(slot.taskId(), undefined);
 });
@@ -79,8 +87,8 @@ test('swarm slot: env task preempts stale history claim', async () => {
   const slot = __swarmSlotForTest();
   const oldId = 'aaaaaaaa-2222-4333-8444-555555555555';
   const envId = 'bbbbbbbb-3333-4444-8555-666666666666';
-  const stale = `---swarm\ntask_id: ${oldId}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nstale\n`;
-  const envTask = `---swarm\ntask_id: ${envId}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nreal\n`;
+  const stale = schedulerWire(oldId, 'Stale scheduler delivery.');
+  const envTask = schedulerWire(envId, 'The real delivery.', '.', '', 1);
   assert.equal(slot.handle(pi, stale), 'claimed');
   assert.equal(slot.taskId(), oldId);
   // Env task arrives late: yields the stale claim, injects the real task.
@@ -88,7 +96,7 @@ test('swarm slot: env task preempts stale history claim', async () => {
   assert.equal(slot.taskId(), envId);
   assert.equal(seen.length, 2);
   // Third task while claimed: ignored.
-  const other = `---swarm\ntask_id: cccccccc-4444-4555-8666-777777777777\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\nother\n`;
+  const other = schedulerWire('cccccccc-4444-4555-8666-777777777777', 'A different delivery.');
   assert.equal(slot.handle(pi, other, envId), 'not-swarm');
 });
 
@@ -97,7 +105,7 @@ test('swarm slot: noteSpawned tracks spawned children', async () => {
   const pi = { sendMessage: () => {} };
   const slot = __swarmSlotForTest();
   const idA = '11111111-2222-4333-8444-555555555555';
-  slot.handle(pi, `---swarm\ntask_id: ${idA}\nfrom: .\ntransfer_send_to: \nattempt: 1\n---\ndo A\n`);
+  slot.handle(pi, schedulerWire(idA, 'A prose task.'));
   slot.noteSpawned('child-1');
   slot.noteSpawned('child-2');
   const t = slot.task();
